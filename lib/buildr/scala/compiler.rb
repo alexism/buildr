@@ -59,7 +59,20 @@ module Buildr::Scala
       Buildr.settings.build['scala.version'] || installed_version || DEFAULT_VERSION
     end
 
-    def compatible_28?
+    def greater_than_29?
+      major, minor = version.match(/^(\d)\.(\d)/).to_a[1,2]
+      if major && minor
+        (major.to_i == 2 && minor.to_i >= 9) || (major.to_i > 2)
+      else
+        false
+      end
+    end
+
+    def lesser_than_29?
+      !greater_than_29?
+    end
+
+    def greater_than_28?
       major, minor = version.match(/^(\d)\.(\d)/).to_a[1,2]
       if major && minor
         (major.to_i == 2 && minor.to_i >= 8) || (major.to_i > 2)
@@ -67,6 +80,7 @@ module Buildr::Scala
         false
       end
     end
+
   end
 
   # Scalac compiler:
@@ -156,17 +170,17 @@ module Buildr::Scala
       options[:warnings] = verbose if options[:warnings].nil?
       options[:deprecation] ||= false
       options[:optimise] ||= false
-      options[:make] ||= :transitivenocp if Scala.compatible_28?
+      options[:make] ||= :transitivenocp if Scala.greater_than_28? && Scala.lesser_than_29?
       options[:javac] ||= {}
 
       @java = Javac.new(project, options[:javac])
     end
 
     def compile(sources, target, dependencies) #:nodoc:
-      check_options(options, OPTIONS + (Scala.compatible_28? ? [:make] : []))
+      check_options(options, OPTIONS + (Scala.greater_than_28? ? [:make] : []))
 
       java_sources = java_sources(sources)
-      enable_dep_tracing = Scala.compatible_28? && java_sources.empty?
+      enable_dep_tracing = Scala.greater_than_28? && Scala.lesser_than_29? && java_sources.empty?
 
       dependencies.unshift target if enable_dep_tracing
 
@@ -226,7 +240,15 @@ module Buildr::Scala
       args = []
       args << "-nowarn" unless options[:warnings]
       args << "-verbose" if trace?(:scalac)
-      args << "-g" if options[:debug]
+      if options[:debug] 
+        if Scala.greater_than_29?
+            # if :debug is a boolean, use the scalac default value
+            options[:debug]= "vars" if options[:debug] === TrueClass
+            args << "-g:#{options[:debug]}"
+        else
+          args << "-g"
+        end
+      end
       args << "-deprecation" if options[:deprecation]
       args << "-optimise" if options[:optimise]
       args << "-target:jvm-" + options[:target].to_s if options[:target]

@@ -84,7 +84,7 @@ module Buildr
 
         # Returns a list of dependencies for this framework.  Default is an empty list,
         # override to add dependencies.
-        def dependencies
+        def dependencies(language)
           @dependencies ||= []
         end
 
@@ -104,8 +104,8 @@ module Buildr
 
       # Returns a list of dependenices for this framework.  Defaults to calling the #dependencies
       # method on the class.
-      def dependencies
-        self.class.dependencies
+      def dependencies(language)
+        self.class.dependencies(language)
       end
 
       # TestTask calls this method to return a list of test names that can be run in this project.
@@ -492,7 +492,8 @@ module Buildr
       #  each { |name| options[name] = @parent_task.options[name] } if @parent_task.respond_to?(:options)
       @framework = cls.new(self, options)
       # Test framework dependency.
-      with @framework.dependencies
+      warn "ALX #{compile.language}"
+      with @framework.dependencies(compile.language)
     end
 
     # :call-seq:

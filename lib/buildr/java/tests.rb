@@ -29,9 +29,9 @@ module Buildr
         project.test.compile.language == :java || project.test.compile.language == :groovy
       end
 
-      def dependencies
+      def dependencies(language)
         unless @dependencies
-          super
+          super language
           # Add buildr utility classes (e.g. JavaTestFilter)
           @dependencies |= [ File.join(File.dirname(__FILE__)) ]
         end
@@ -42,7 +42,7 @@ module Buildr
   private
 
     # Add buildr utilities (JavaTestFilter) to classpath
-    Java.classpath << lambda { dependencies }
+    Java.classpath << lambda { dependencies(:unknown) }
 
     # :call-seq:
     #     filter_classes(dependencies, criteria)
@@ -101,7 +101,7 @@ module Buildr
         Buildr.settings.build['jmock'] || VERSION
       end
 
-      def dependencies
+      def dependencies(language)
         two_or_later = version[0,1].to_i >= 2
         group = two_or_later ? "org.jmock" : "jmock"
 
@@ -202,8 +202,10 @@ module Buildr
         Buildr.settings.build['junit'] || VERSION
       end
 
-      def dependencies
-        @dependencies ||= ["junit:junit:jar:#{version}"]+ JMock.dependencies
+      def dependencies(language)
+        @dependencies ||= ["junit:junit:jar:#{version}"]+ JMock.dependencies(language)
+        @dependencies <<  "org.scalatest:scalatest_#{Scala.version}:jar:#{Scala::ScalaTest.version}" if language == :scala
+        @dependencies
       end
 
       def ant_taskdef #:nodoc:
@@ -307,7 +309,7 @@ module Buildr
         Buildr.settings.build['testng'] || VERSION
       end
 
-      def dependencies
+      def dependencies(language)
         ["org.testng:testng:jar:jdk15:#{version}"]+ JMock.dependencies
       end
 

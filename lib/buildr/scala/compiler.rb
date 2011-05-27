@@ -19,7 +19,7 @@ require 'buildr/core/compile'
 require 'buildr/packaging'
 
 module Buildr::Scala
-  DEFAULT_VERSION = '2.8.1'
+  DEFAULT_VERSION = '2.9.0'
 
   class << self
 

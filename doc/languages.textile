@@ -170,7 +170,7 @@ Before using Scala, you must first @require@ the Scala compiler:
 require 'buildr/scala'
 {% endhighlight %}
 
-By default, Buildr will attempt to use the latest stable release of Scala, which is currently Scala 2.8.0 as of July 2010.  Of course you can configure a specific version of Scala for your project by adding the following entry in @build.yaml@:
+By default, Buildr will attempt to use the latest stable release of Scala, which is currently Scala 2.9.0 as of May 2011.  Of course you can configure a specific version of Scala for your project by adding the following entry in @build.yaml@:
 
 {% highlight yaml %}
 scala.version: 2.8.0.Beta1  # Pick your version
@@ -207,17 +207,24 @@ If you point the @compile@ task at any other source directory, it will use the  
 
 When using the Scala compiler, if you don't specify the packaging type, it defaults to JAR.
 
-The Scala compiler supports the following options:
+The 2.9.0 Scala compiler supports the following options:
 
 |_. Option        |_. Usage |
-| @:debug@        | Generates bytecode with debugging information.  You can also override this by setting the environment variable @debug@ to @off@. |
+| @:debug@        | Generates bytecode with debugging information. @debug@ takes the same values as the @-g@ option: none,source,line,vars,notc. It can also received a boolean and if @true@ the 'vars' level is used. You can also override this by setting the environment variable @debug@ to @off@.|
 | @:deprecation@  | If true, shows deprecation messages.  False by default. |
 | @:optimise@     | Generates faster bytecode by applying optimisations to the program. |
 | @:other@        | Array of options passed to the compiler (e.g. @:other=>'-Xprint-types'@). |
-| @:make@         | Make strategy to be used by the compiler (e.g. @:make=>'transitive'@).  *Scala 2.8 only* |
 | @:target@       | Bytecode compatibility (e.g. '1.4'). |
 | @:warnings@     | Issue warnings when compiling.  True when running in verbose mode. |
 | @:javac@        | A hash of options passed to the @javac@ compiler verbatim. |
+
+
+In version 2.8 or prior, Scala compiler also supports the following options:
+
+|_. Option        |_. Usage |
+| @:debug@         | Generates bytecode with debugging information.  In version 2.8, @debug@ accepts only true or false.|
+| @:make@         | Make strategy to be used by the compiler (e.g. @:make=>'transitive'@).|
+
 
 h4. Fast Scala Compiler
 

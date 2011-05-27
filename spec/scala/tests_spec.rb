@@ -22,7 +22,19 @@ require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers')
 #  -test exclude group
 #  -test include Suite's
 #  -test exclude Suite's
+#
+describe "scalatest version" do
 
+  it 'should be 1.3 for scala 2.8' do
+    Buildr.settings.build['scala.version'] = "2.8.1"
+    Scala::ScalaTest.dependencies.should include("org.scalatest:scalatest:jar:1.3")
+  end
+
+  it 'should be 1.4.1 for scala 2.9' do
+    Buildr.settings.build['scala.version'] = "2.9.0"
+    Scala::ScalaTest.dependencies.should include("org.scalatest:scalatest_2.9.0:jar:1.4.1")
+  end
+end
 
 describe Buildr::Scala::ScalaTest do
   

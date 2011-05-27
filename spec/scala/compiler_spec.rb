@@ -143,15 +143,7 @@ describe 'scala compiler (downloaded from repository)' do
   end
 end
 
-
-describe 'scalac compiler options' do
-  def compile_task
-    @compile_task ||= define('foo').compile.using(:scalac)
-  end
-
-  def scalac_args
-    compile_task.instance_eval { @compiler }.send(:scalac_args)
-  end
+share_as :ScalacCompiler_CommonOptions do
 
   it 'should set warnings option to false by default' do
     compile_task.options.warnings.should be_false
@@ -198,16 +190,6 @@ describe 'scalac compiler options' do
   it 'should set debug option to false based on DEBUG environment variable' do
     ENV['DEBUG'] = 'no'
     compile_task.options.debug.should be_false
-  end
-
-  it 'should use -g argument when debug option is true' do
-    compile_task.using(:debug=>true)
-    scalac_args.should include('-g')
-  end
-
-  it 'should not use -g argument when debug option is false' do
-    compile_task.using(:debug=>false)
-    scalac_args.should_not include('-g')
   end
 
   it 'should set deprecation option to false by default' do
@@ -287,3 +269,68 @@ describe 'scalac compiler options' do
     ENV.delete "DEBUG"
   end
 end
+
+
+describe 'scala compiler 2.8 options' do
+
+  before(:all) do
+    # Force Scala 2.8.1 for specs;
+    Buildr.settings.build['scala.version'] = "2.8.1"
+  end
+
+  it_should_behave_like ScalacCompiler_CommonOptions
+
+  def compile_task
+    @compile_task ||= define('foo').compile.using(:scalac)
+  end
+
+  def scalac_args
+    compile_task.instance_eval { @compiler }.send(:scalac_args)
+  end
+
+  it 'should use -g argument when debug option is true' do
+    compile_task.using(:debug=>true)
+    scalac_args.should include('-g')
+  end
+
+  it 'should not use -g argument when debug option is false' do
+    compile_task.using(:debug=>false)
+    scalac_args.should_not include('-g')
+  end
+end
+
+describe 'scala compiler 2.9 options' do
+
+  before(:all) do
+    # Force Scala 2.9.0 for specs;
+    Buildr.settings.build['scala.version'] = "2.9.0"
+  end
+
+  it_should_behave_like ScalacCompiler_CommonOptions
+
+  def compile_task
+    @compile_task ||= define('foo').compile.using(:scalac)
+  end
+
+  def scalac_args
+    compile_task.instance_eval { @compiler }.send(:scalac_args)
+  end
+
+  # these specs fail. Somehow the compiler is still in version 2.8
+  it 'should use -g:vars argument when debug option is true' do
+    compile_task.using(:debug=>true)
+    scalac_args.should include('-g:vars')
+  end
+
+  it 'should use -g:whatever argument when debug option is \'whatever\'' do
+    compile_task.using(:debug=>:whatever)
+    scalac_args.should include('-g:whatever')
+  end
+
+  it 'should not use -g argument when debug option is false' do
+    compile_task.using(:debug=>false)
+    scalac_args.should_not include('-g')
+  end
+
+end
+

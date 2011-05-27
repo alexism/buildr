@@ -68,8 +68,9 @@ module Buildr::Scala
       end
 
       def dependencies
-        ["org.scalatest:scalatest_#{Buildr::Scala.version}:jar:#{version}"] + Check.dependencies +
-          JMock.dependencies + JUnit.dependencies
+        scalatest = "org.scalatest:scalatest_#{Buildr::Scala.version}:jar:#{version}"
+        scalatest = "org.scalatest:scalatest:jar:#{version}" if Buildr::Scala.lesser_than_29?
+        [scalatest] + Check.dependencies + JMock.dependencies + JUnit.dependencies
       end
 
       def applies_to?(project) #:nodoc:

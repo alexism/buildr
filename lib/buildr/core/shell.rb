@@ -13,19 +13,16 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/shell'
-require 'buildr/java/commands'
-require 'buildr/core/util'
-
 module Buildr
+
   module Shell
 
     class BeanShell < Base
-
-      include JavaRebel
+      include Buildr::JRebel
 
       VERSION = '2.0b4'
+
+      specify :name => :bsh, :languages => [:java]
 
       class << self
         def version
@@ -35,22 +32,16 @@ module Buildr
         def artifact
           "org.beanshell:bsh:jar:#{version}"
         end
-
-        def lang
-          :java
-        end
-
-        def to_sym
-          :bsh
-        end
       end
 
-      def launch
-        cp = project.compile.dependencies + [project.path_to(:target, :classes), Buildr.artifact(BeanShell.artifact)]
+      def launch(task)
+        cp = ( project.compile.dependencies +
+               [project.path_to(:target, :classes), Buildr.artifact(BeanShell.artifact)] +
+               task.classpath )
         Java::Commands.java 'bsh.Console', {
-          :properties => rebel_props(project),
+          :properties => jrebel_props(project).merge(task.properties),
           :classpath => cp,
-          :java_args => rebel_args
+          :java_args => jrebel_args + task.java_args
         }
       end
 
@@ -58,26 +49,23 @@ module Buildr
 
 
     class JIRB < Base
-      include JavaRebel
+      include JRebel
 
-      JRUBY_VERSION = '1.4.0'
+      JRUBY_VERSION = '1.6.2'
 
-      class << self
-        def lang
-          :none
-        end
-      end
-
-      def launch
+      def launch(task)
         if jruby_home     # if JRuby is installed, use it
           cp = project.compile.dependencies +
             [project.path_to(:target, :classes)] +
-            Dir.glob("#{jruby_home}#{File::SEPARATOR}lib#{File::SEPARATOR}*.jar")
+            Dir.glob("#{jruby_home}#{File::SEPARATOR}lib#{File::SEPARATOR}*.jar") +
+            task.classpath
 
           props = {
             'jruby.home' => jruby_home,
             'jruby.lib' => "#{jruby_home}#{File::SEPARATOR}lib"
           }
+          props.merge! jrebel_props(project)
+          props.merge! task.properties
 
           if not Util.win_os?
             uname = `uname -m`
@@ -104,26 +92,27 @@ module Buildr
 
           args = [
             "-Xbootclasspath/a:#{Dir.glob("#{jruby_home}#{File::SEPARATOR}lib#{File::SEPARATOR}jruby*.jar").join File::PATH_SEPARATOR}"
-          ]
+          ] + jrebel_args + task.java_args
 
           Java::Commands.java 'org.jruby.Main', "#{jruby_home}#{File::SEPARATOR}bin#{File::SEPARATOR}jirb", {
-            :properties => props.merge(rebel_props(project)),
+            :properties => props,
             :classpath => cp,
-            :java_args => args + rebel_args
+            :java_args => args
           }
         else
-          cp = project.compile.dependencies + [
-              jruby_artifact,
-              project.path_to(:target, :classes)
-            ]
+          cp = project.compile.dependencies + [ jruby_artifact, project.path_to(:target, :classes) ] +
+               task.classpath
+          props = jrebel_props(project).merge(task.properties)
+          args = jrebel_args + task.java_args
 
           Java::Commands.java 'org.jruby.Main', '--command', 'irb', {
-            :properties => rebel_props(project),
+            :properties => props,
             :classpath => cp,
-            :java_args => rebel_args
+            :java_args => args
           }
         end
       end
+
     private
       def jruby_home
         @jruby_home ||= RUBY_PLATFORM =~ /java/ ? Config::CONFIG['prefix'] : ENV['JRUBY_HOME']
@@ -135,64 +124,9 @@ module Buildr
       end
 
     end
-
-    class Clojure < Base
-      include JavaRebel
-
-      JLINE_VERSION = '0.9.94'
-
-      class << self
-        def lang
-          :none
-        end
-
-        def to_sym
-          :clj      # more common than `clojure`
-        end
-      end
-
-      # don't build if it's *only* Clojure sources
-      def build?
-        !has_source?(:clojure) or has_source?(:java) or has_source?(:scala) or has_source?(:groovy)
-      end
-
-      def launch
-        fail 'Are we forgetting something? CLOJURE_HOME not set.' unless clojure_home
-
-        cp = project.compile.dependencies +
-          [
-            if build?
-              project.path_to(:target, :classes)
-            else
-              project.path_to(:src, :main, :clojure)
-            end,
-            File.expand_path('clojure.jar', clojure_home),
-            'jline:jline:jar:0.9.94'
-          ]
-
-        if build?
-          Java::Commands.java 'jline.ConsoleRunner', 'clojure.lang.Repl', {
-            :properties => rebel_props(project),
-            :classpath => cp,
-            :java_args => rebel_args
-          }
-        else
-          Java::Commands.java 'jline.ConsoleRunner', 'clojure.lang.Repl', :classpath => cp
-        end
-      end
-
-    private
-      def clojure_home
-        @home ||= ENV['CLOJURE_HOME']
-      end
-
-      def has_source?(lang)
-        File.exists? project.path_to(:src, :main, lang)
-      end
-    end
   end
 end
 
-Buildr::ShellProviders << Buildr::Shell::BeanShell
-Buildr::ShellProviders << Buildr::Shell::JIRB
-Buildr::ShellProviders << Buildr::Shell::Clojure
+Buildr::Shell.providers << Buildr::Shell::BeanShell
+Buildr::Shell.providers << Buildr::Shell::JIRB
+

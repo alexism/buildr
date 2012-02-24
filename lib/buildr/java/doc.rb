@@ -13,10 +13,20 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-require 'buildr/core/doc'
-
 module Buildr
   module Doc
+
+    module JavadocDefaults
+      include Extension
+
+      # Default javadoc -windowtitle to project's comment or name
+      after_define(:javadoc => :doc) do |project|
+        if project.doc.engine? Javadoc
+          options = project.doc.options
+          options[:windowtitle] = (project.comment || project.name) unless options[:windowtitle]
+        end
+      end
+    end
 
     # A convenient task for creating Javadocs from the project's compile task. Minimizes all
     # the hard work to calling #from and #using.
@@ -34,7 +44,7 @@ module Buildr
       specify :language => :java, :source_ext => 'java'
 
       def generate(sources, target, options = {})
-        cmd_args = [ '-d', target, Buildr.application.options.trace ? '-verbose' : '-quiet' ]
+        cmd_args = [ '-d', target, trace?(:javadoc) ? '-verbose' : '-quiet' ]
         options.reject { |key, value| [:sourcepath, :classpath].include?(key) }.
           each { |key, value| value.invoke if value.respond_to?(:invoke) }.
           each do |key, value|
@@ -64,6 +74,10 @@ module Buildr
         end
       end
     end
+  end
+
+  class Project
+    include JavadocDefaults
   end
 end
 

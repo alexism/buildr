@@ -3,6 +3,21 @@ layout: default
 title: Installing and Running
 ---
 
+h1(#all-in-one). All In One Bundle
+
+Contributors to this project maintain a separate distribution over on "RubyForge":http://rubyforge.org/projects/buildr. Using this distribution, it is possible to install Buildr just like you would install Apache Ant or Apache Maven. It comes bundled with JRuby and distributed as a cross-platform zip or tar.gz file.
+
+The RubyForge distribution is *not* an official Apache distribution. The all-in-one bundles are hosted on the "Files page":http://rubyforge.org/frs/?group_id=3180.
+
+*In details:* Navigate to "Rubyforge's buildr's Files page":http://rubyforge.org/frs/?group_id=3180 and download the all-in-one bundle for the latest version available.
+
+Unzip the bundle in a convenient location. 
+
+You can execute the buildr executable under the bin directory directly. 
+
+You should consider adding the bin directory of the result to the @PATH@ global environment variable. See "Installing Buildr for JRuby":#jruby for instructions to update it.  
+
+h1(#the-gem). Installing the gem
 
 *The easy way:*  We recommend you pick the platform you want to run Buildr on and then follow the _easy way_ instructions for that platform.  It could save you an hour or two struggling to install all the right dependencies.
 
@@ -22,8 +37,6 @@ h2(#linux).  Installing on Linux
 
 *The easy way:* Use this bash script to "install Buildr on Linux":scripts/install-linux.sh.  This script will install the most recent version of Buildr, or if already installed, upgrade to the most recent version.  It will also install Ruby 1.8.6 if not already installed (requires @apt-get@, @yum@ or @urpmi@) and upgrade to RubyGems 1.3.1 or later.
 
-p(note). At this time, the native Ruby-Java Bridge (RJB) does not work very well on Linux with JDK 1.6.  If you get Segmentation Fault errors with JDK 1.6, we recommend switching to JDK 1.5.
-
 <br>
 
 *In details:* To get started you will need a recent version of Ruby, Ruby Gems and build tools for compiling native libraries (@make@, @gcc@ and standard headers).
@@ -41,7 +54,7 @@ On *Ubuntu* you have to install several packages:
 $ sudo apt-get install ruby-full ruby1.8-dev libopenssl-ruby build-essential
 {% endhighlight %}
 
-The Debian package for @rubygems@ will not allow you to install Buildr, so you need to install RubyGems from source:
+If using Ubuntu 9.10 or earlier, the Debian package for @rubygems@ will not allow you to install Buildr, so you need to install RubyGems from source:
 
 {% highlight sh %}
 $ wget http://rubyforge.org/frs/download.php/45905/rubygems-1.3.1.tgz
@@ -61,9 +74,8 @@ To upgrade to a new version or install a specific version:
 
 {% highlight sh %}
 $ sudo env JAVA_HOME=$JAVA_HOME gem update buildr
-$ sudo env JAVA_HOME=$JAVA_HOME gem install buildr -v 1.3.4
+$ sudo env JAVA_HOME=$JAVA_HOME gem install buildr -v 1.4.3
 {% endhighlight %}
-
 
 
 h2(#osx).  Installing on OS X
@@ -71,6 +83,16 @@ h2(#osx).  Installing on OS X
 *The easy way:* Use this script to "install Buildr on OS X":scripts/install-osx.sh.  This script will install the most recent version of Buildr, or if already installed, upgrade to the most recent version.  It will also install Ruby 1.8.6 if not already installed (using MacPorts/Fink) and upgrage RubyGems to 1.3.1 or later.
 
 You need to have the Apple Development Tools installed.  They are available on the Mac OSX installation CD.
+
+p(note). Java Update 3 for Snow Leopard removes header files necessary to compile the native Ruby-Java Bridge (RJB) gem, so installing rjb gem may fail on OS X.  The solution is to install Java for Mac OS X 10.6 Update 3 Developer Package from http://connect.apple.com before @gem install@.
+
+*Using RVM?* If you're not using the built-in ruby on OS X (e.g., if you're using RVM), you'll need to force-install the platform-independent RJB:
+
+{% highlight sh %}
+$ gem install rjb -v 1.3.3 --platform ruby
+{% endhighlight %}
+
+The darwin pre-built binary seems to only work with the built-in ruby.
 
 <br>
 
@@ -103,20 +125,13 @@ $ sudo env JAVA_HOME=$JAVA_HOME gem update buildr
 $ sudo env JAVA_HOME=$JAVA_HOME gem install buildr -v 1.3.4
 {% endhighlight %}
 
-
 h2(#windows).  Installing on Windows
 
 *The easy way:*  The easiest way to install Ruby is using the "one-click installer":http://rubyinstaller.rubyforge.org/.  Be sure to install Ruby 1.8.6; support for Ruby 1.9.x is still a work in progress.  Once installed, set the @JAVA_HOME@ environment variable and run @gem install buildr --platform mswin32@.
 
 <br>
 
-*In details:* We recommend you first upgrade to the latest version of Ruby gems:
-
-{% highlight sh %}
-> gem update --system
-{% endhighlight %}
-
-Before installing Buildr, please set the @JAVA_HOME@ environment variable to point to your JDK distribution.  Next, use Ruby Gem to install Buildr:
+*In details:* Before installing Buildr, please set the @JAVA_HOME@ environment variable to point to your JDK distribution.  Next, use Ruby Gem to install Buildr:
 
 {% highlight sh %}
 > gem install buildr --platform mswin32
@@ -131,11 +146,11 @@ To upgrade to a new version or install a specific version:
 
 h2(#jruby).  Installing for JRuby
 
-*The easy way:* Use this bash script to "install Buildr on JRuby":scripts/install-jruby.sh.  This script will install the most recent version of Buildr, or if already installed, upgrade to the most recent version.  If necessary, it will also install JRuby 1.1.6 in @/opt/jruby@ and update the @PATH@ variable in @~/.bash_profile@ or @~/.profile@.
+*The easy way:* Use this bash script to "install Buildr on JRuby":scripts/install-jruby.sh.  This script will install the most recent version of Buildr, or if already installed, upgrade to the most recent version.  If necessary, it will also install JRuby 1.6.1 in @/opt/jruby@ and update the @PATH@ variable in @~/.bash_profile@ or @~/.profile@.
 
 <br>
 
-*In details:* If you don't already have JRuby 1.1.6 or later installed, you can download it from the "JRuby site":http://dist.codehaus.org/jruby/.
+*In details:* If you don't already have JRuby 1.5.1 or later installed, you can download it from the "JRuby site":http://www.jruby.org/download.
 
 After uncompressing JRuby, update your @PATH@ to include both @java@ and @jruby@ executables.
 
@@ -182,6 +197,17 @@ $ jruby -S buildr
 
 Run @buildr --version@ from the command line to find which version of Buildr you are using by default.  If you see @(JRuby ...)@, Buildr is running on that version of JRuby.
 
+h2. Using multiple versions of Buildr
+
+Rubygems makes it possible to install several versions of Buildr side-by-side on the same system.  If you want to run a specific version, you can do so by adding the version number between underscores ('_') as the first command-line parameter.  For example,
+
+{% highlight sh %}
+$ buildr _1.3.4_ clean   # runs Buildr v1.3.4
+
+$ buildr _1.4.4_ clean   # runs Buildr v1.4.4
+{% endhighlight %}
+
+p(note). There are two `buildr` executables installed by Rubygems.  One script serves to select the specified (or default) version of Buildr and is typically found under `/usr/bin/buildr` or `/var/lib/gems/1.8/bin/buildr`. The exact location will vary depending on your system.   The other script is the Buildr bootstrap per se and can be found under the specific version of Buildr, e.g, `/var/lib/gems/1.8/gems/buildr-1.4.0/bin/buildr`.   The first script should be on your `PATH`.   The second script should not be called directly and should not be on your `PATH`.
 
 h2(#running). Running Buildr
 
@@ -205,7 +231,8 @@ There are several options you can use, for a full list of options type @buildr -
 | @-q/--quiet@              | Do not log messages to standard output.                 |
 | @-r/--require [file]@     | Require MODULE before executing buildfile.              |
 | @-t/--trace@              | Turn on invoke/execute tracing, enable full backtrace.  |
-| @-v/--version@            | Display the program version.                            |
+| @-v/--verbose@            | Log message to standard output                          |
+| @-V/--version@            | Display the program version.                            |
 | @-P/--prereqs@            | Display tasks and dependencies, then exit.              |
 
 You can tell Buildr to run specific tasks and the order to run them.  For example:

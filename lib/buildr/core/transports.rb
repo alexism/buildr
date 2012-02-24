@@ -13,19 +13,15 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'uri'
 require 'net/http'
 # PATCH:  On Windows, Net::SSH 2.0.2 attempts to load the Pageant DLLs which break on JRuby.
 $LOADED_FEATURES << 'net/ssh/authentication/pageant.rb' if RUBY_PLATFORM =~ /java/
-gem 'net-ssh' ; Net.autoload :SSH, 'net/ssh'
-gem 'net-sftp' ; Net.autoload :SFTP, 'net/sftp'
+Net.autoload :SSH, 'net/ssh'
+Net.autoload :SFTP, 'net/sftp'
 autoload :CGI, 'cgi'
 require 'digest/md5'
 require 'digest/sha1'
-require 'stringio'
 autoload :ProgressBar, 'buildr/core/progressbar'
-
 
 # Not quite open-uri, but similar. Provides read and write methods for the resource represented by the URI.
 # Currently supports reads for URI::HTTP and writes for URI::SFTP. Also provides convenience methods for
@@ -214,14 +210,14 @@ module URI
       elsif source.respond_to?(:read)
         digests = (options[:digests] || [:md5, :sha1]).
           inject({}) { |hash, name| hash[name] = Digest.const_get(name.to_s.upcase).new ; hash }
-        size = source.size rescue nil
+        size = source.stat.size rescue nil
         write (options).merge(:progress=>verbose && size, :size=>size) do |bytes|
           source.read(bytes).tap do |chunk|
             digests.values.each { |digest| digest << chunk } if chunk
           end
         end
         digests.each do |key, digest|
-          self.merge("#{self.path}.#{key}").write "#{digest.hexdigest} #{File.basename(path)}",
+          self.merge("#{self.path}.#{key}").write digest.hexdigest,
             (options).merge(:progress=>false)
         end
       else
@@ -308,6 +304,8 @@ module URI
               end
             end
             return result
+          when Net::HTTPUnauthorized
+            raise NotFoundError, "Looking for #{self} but repository says Unauthorized/401."
           when Net::HTTPNotFound
             raise NotFoundError, "Looking for #{self} and all I got was a 404!"
           else
@@ -327,7 +325,7 @@ module URI
         while chunk = yield(RW_CHUNK_SIZE)
           content << chunk
         end
-        headers = { 'Content-MD5'=>Digest::MD5.hexdigest(content.string) }
+        headers = { 'Content-MD5'=>Digest::MD5.hexdigest(content.string), 'Content-Type'=>'application/octet-stream' }
         request = Net::HTTP::Put.new(request_uri.empty? ? '/' : request_uri, headers)
         request.basic_auth self.user, self.password if self.user
         response = nil
@@ -396,25 +394,23 @@ module URI
       ssh_options[:password] ||= SFTP.passwords[host]
       begin
         trace "Connecting to #{host}"
-        result = nil
+        if block
+          result = nil
+        else
+          result = ''
+          block = lambda { |chunk| result << chunk }
+        end
         Net::SFTP.start(host, user, ssh_options) do |sftp|
           SFTP.passwords[host] = ssh_options[:password]
           trace 'connected'
 
-          with_progress_bar options[:progress] && options[:size], path.split('/'), options[:size] || 0 do |progress|
-            trace "Downloading to #{path}"
+          with_progress_bar options[:progress] && options[:size], path.split('/').last, options[:size] || 0 do |progress|
+            trace "Downloading from #{path}"
             sftp.file.open(path, 'r') do |file|
-              if block
-                while chunk = file.read(RW_CHUNK_SIZE)
-                  block.call chunk
-                  progress << chunk
-                end
-              else
-                result = ''
-                while chunk = file.read(RW_CHUNK_SIZE)
-                  result << chunk
-                  progress << chunk
-                end
+              while chunk = file.read(RW_CHUNK_SIZE)
+                block.call chunk
+                progress << chunk
+                break if chunk.size < RW_CHUNK_SIZE
               end
             end
           end
@@ -452,7 +448,7 @@ module URI
             "#{combined}/"
           end
 
-          with_progress_bar options[:progress] && options[:size], path.split('/'), options[:size] || 0 do |progress|
+          with_progress_bar options[:progress] && options[:size], path.split('/').last, options[:size] || 0 do |progress|
             trace "Uploading to #{path}"
             sftp.file.open(path, 'w') do |file|
               while chunk = yield(RW_CHUNK_SIZE)
@@ -485,6 +481,13 @@ module URI
   class FILE < Generic
 
     COMPONENT = [ :host, :path ].freeze
+
+    def upload(source, options = nil)
+      super
+      if File === source then
+        File.chmod(source.stat.mode, real_path)
+      end
+    end
 
     def initialize(*args)
       super
@@ -541,7 +544,7 @@ module URI
       raise ArgumentError, 'Either you\'re attempting to write a file to another host (which we don\'t support), or you used two slashes by mistake, where you should have file:///<path>.' if host
       temp = Tempfile.new(File.basename(path))
       temp.binmode
-      with_progress_bar options[:progress] && options[:size], path.split('/'), options[:size] || 0 do |progress|
+      with_progress_bar options[:progress] && options[:size], path.split('/').last, options[:size] || 0 do |progress|
         while chunk = yield(RW_CHUNK_SIZE)
           temp.write chunk
           progress << chunk

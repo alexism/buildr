@@ -14,23 +14,19 @@
 # the License.
 
 
-# TODO: Antwrap 0.7 requires this monkeypatch, have it fixed.
-class Array #:nodoc:
-  alias :nitems :size
+module Buildr::Clojure
+
+  REQUIRES = ArtifactNamespace.for(self) do |ns|
+    ns.clojure! 'org.clojure:clojure:jar:1.2.0'
+    ns.jline! 'jline:jline:jar:0.9.94'
+  end
+
+  class << self
+    def dependencies #:nodoc:
+      REQUIRES.artifacts
+    end
+  end
+
 end
 
-require 'buildr/core/common'
-require 'buildr/core/application'
-require 'buildr/core/project'
-require 'buildr/core/environment'
-require 'buildr/core/help'
-require 'buildr/core/build'
-require 'buildr/core/filter'
-require 'buildr/core/compile'
-require 'buildr/core/test'
-require 'buildr/core/shell'
-require 'buildr/core/checks'
-require 'buildr/core/transports'
-require 'buildr/core/generate'
-require 'buildr/core/cc'
-require 'buildr/core/osx' if RUBY_PLATFORM =~ /darwin/
+require 'buildr/clojure/shell'

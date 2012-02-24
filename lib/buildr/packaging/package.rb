@@ -13,12 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/core/project'
-require 'buildr/core/compile'
-require 'buildr/packaging/artifact'
-
-
 module Buildr
   # Methods added to Project to support packaging and tasks for packaging,
   # installing and uploading packages.
@@ -106,7 +100,7 @@ module Buildr
     #  end
     #
     # Two other packaging types are:
-    # * package :sources -- Creates a ZIP file with the source code and classifier 'sources', for use by IDEs.
+    # * package :sources -- Creates a JAR file with the source code and classifier 'sources', for use by IDEs.
     # * package :javadoc -- Creates a ZIP file with the Javadocs and classifier 'javadoc'. You can use the
     #   javadoc method to further customize it.
     #
@@ -124,11 +118,11 @@ module Buildr
     #
     # The file name is determined from the specification passed to the package method, however, some
     # packagers need to override this.  For example, package(:sources) produces a file with the extension
-    # 'zip' and the classifier 'sources'.  If you need to overwrite the default implementation, you should
+    # 'jar' and the classifier 'sources'.  If you need to overwrite the default implementation, you should
     # also include a method named package_as_[type]_spec.  For example:
     #   def package_as_sources_spec(spec) #:nodoc:
-    #     # Change the source distribution to .jar extension
-    #     spec.merge({ :type=>:jar, :classifier=>'sources' })
+    #     # Change the source distribution to .zip extension
+    #     spec.merge({ :type=>:zip, :classifier=>'sources' })
     #   end
     def package(*args)
       spec = Hash === args.last ? args.pop.dup : {}
@@ -168,7 +162,6 @@ module Buildr
         task 'package'=>package
         package.enhance [task('build')]
         package.enhance { info "Packaging #{File.basename(file_name)}" }
-
         if spec[:file]
           class << package ; self ; end.send(:define_method, :type) { spec[:type] }
           class << package ; self ; end.send(:define_method, :id) { nil }
@@ -176,19 +169,27 @@ module Buildr
           # Make it an artifact using the specifications, and tell it how to create a POM.
           package.extend ActsAsArtifact
           package.send :apply_spec, spec.only(*Artifact::ARTIFACT_ATTRIBUTES)
-          # Another task to create the POM file.
-          pom = package.pom
-          pom.enhance do
-            mkpath File.dirname(pom.name)
-            File.open(pom.name, 'w') { |file| file.write pom.pom_xml }
+
+          # Create pom associated with package
+          class << package
+            def pom
+              unless @pom
+                pom_filename = Util.replace_extension(self.name, 'pom')
+                spec = {:group=>group, :id=>id, :version=>version, :type=>:pom}
+                @pom = Buildr.artifact(spec, pom_filename)
+                @pom.content @pom.pom_xml
+              end
+              @pom
+            end
           end
+
           file(Buildr.repositories.locate(package)=>package) { package.install }
 
           # Add the package to the list of packages created by this project, and
           # register it as an artifact. The later is required so if we look up the spec
           # we find the package in the project's target directory, instead of finding it
           # in the local repository and attempting to install it.
-          Artifact.register package, pom
+          Artifact.register package, package.pom
         end
 
         task('install')   { package.install if package.respond_to?(:install) }
@@ -225,12 +226,12 @@ module Buildr
     alias :package_as_tgz :package_as_tar
 
     def package_as_sources_spec(spec) #:nodoc:
-      spec.merge(:type=>:zip, :classifier=>'sources')
+      spec.merge(:type=>:jar, :classifier=>'sources')
     end
 
     def package_as_sources(file_name) #:nodoc:
       ZipTask.define_task(file_name).tap do |zip|
-        zip.include :from=>compile.sources
+        zip.include :from=>[compile.sources, resources.target].compact
       end
     end
 

@@ -54,8 +54,8 @@ p(note). Buildr does not check any of the arguments in @JAVA_OPTS@.  A common mi
 Some extensions may use additional environment variables, and of course, you can always add your own.  This example uses two environment variables for specifying the username and password:
 
 {% highlight ruby %}
-repositories.upload_to[:username] = ENV['USERNAME']
-repositories.upload_to[:password] = ENV['PASSWORD']
+repositories.release_to[:username] = ENV['USERNAME']
+repositories.release_to[:password] = ENV['PASSWORD']
 {% endhighlight %}
 
 
@@ -77,17 +77,17 @@ repositories:
   local: some/path/to/my_repo
 
   # prefer the local or nearest mirrors
-  remote: 
+  remote:
    - https://intra.net/maven2
    - http://example.com
 
-  relase_to:
+  release_to:
     url: http://intra.net/maven2
     username: john
     password: secret
 
-# You can place settings of your own, and reference them 
-# on buildfiles. 
+# You can place settings of your own, and reference them
+# on buildfiles.
 im:
   server: jabber.company.com
   usr: notifier@company-jabber.com
@@ -97,7 +97,7 @@ im:
 Later your buildfile or addons can reference user preferences using the  hash returned by the @Buildr.settings.user@ accessor.
 
 {% highlight ruby %}
-task 'relase-notification' do
+task 'release-notification' do
  usr, pwd, server = settings.user['im'].values_at('usr', 'pwd', 'server')
  jabber = JabberAPI.new(server, usr, pwd)
  jabber.msg("We are pleased to announce the last stable version #{VERSION}")
@@ -113,7 +113,7 @@ They help keep the buildfile and build.yaml file simple and readable, working to
 
 {% highlight yaml %}
 # This project requires the following ruby gems, buildr addons
-gems: 
+gems:
   # Suppose we want to notify developers when testcases fail.
   - buildr-twitter-notifier-addon >=1
   # we test with ruby mock objects
@@ -132,11 +132,11 @@ twitter:
   notify:
     test_failure: unless-modified
     compile_failure: never
-  developers: 
+  developers:
     - joe
     - jane
 
-jira: 
+jira:
   uri: https://jira.corp.org
 {% endhighlight %}
 
@@ -145,7 +145,7 @@ When buildr is loaded, required ruby gems will be installed if needed, thus addi
 Artifacts defined on @build.yaml@ can be referenced on your buildfile by supplying the ruby symbol to the @Buildr.artifact@ and @Buildr.artifacts@ methods.  The @compile.with@, @test.with@ methods can also be given these names.
 
 {% highlight ruby %}
-define 'my_project' do 
+define 'my_project' do
   compile.with artifacts(:log4j, :j2ee)
   test.with :spring, :j2ee
 end
@@ -154,7 +154,7 @@ end
 Build settings can be retreived using the @Buildr.settings.build@ accessor.
 
 {% highlight ruby %}
- task 'create_patch' do 
+ task 'create_patch' do
    patch = Git.create_patch :interactive => true
    if patch && agree("Would you like to request inclusion of #{patch}")
      jira = Jira.new( Buildr.settings.build['jira']['uri'] )  # submit a patch
@@ -174,8 +174,8 @@ Here's an example @buildr.rb@:
 
 {% highlight ruby %}
 # Only I should know that
-repositories.upload_to[:username] = 'assaf'
-repositories.upload_to[:password] = 'supersecret'
+repositories.release_to[:username] = 'assaf'
+repositories.release_to[:password] = 'supersecret'
 # Search here first, it's faster
 repositories.remote << 'http://inside-the-firewall'
 {% endhighlight %}
@@ -212,7 +212,7 @@ Here's a simple example for handling different environments within the Buildfile
 
 {% highlight ruby %}
 project 'db-module' do
-  db = (environment == 'production' ? 'oracle' : 'hsql')
+  db = (Buildr.environment == 'production' ? 'oracle' : 'hsql')
   resources.from(_("src/main/#{db}"))
 end
 {% endhighlight %}

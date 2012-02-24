@@ -14,28 +14,29 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
-describe 'ArchiveTask', :shared=>true do
-  before do
-    @dir = File.expand_path('test')
-    @files = %w{Test1.txt Text2.html}.map { |file| File.expand_path(file, @dir) }.
-      each { |file| write file, content_for(file) }
-    @empty_dirs = %w{EmptyDir1 EmptyDir2}.map { |file| File.expand_path(file, @dir) }.
-      each { |file| mkdir file }
-  end
-
+module ArchiveTaskHelpers
   # Not too smart, we just create some content based on file name to make sure you read what you write.
   def content_for(file)
     "Content for #{File.basename(file)}"
+  end
+
+  # Qualify a filename
+  #
+  # e.g. qualify("file.zip", "src") => "file-src.zip"
+  def qualify(filename, qualifier)
+    ext = (filename =~ /\.$/) ? "." : File.extname(filename)
+    base = filename[0..0-ext.size-1]
+    base + "-" + qualifier + ext
   end
 
   # Create an archive not using the archive task, this way we do have a file in existence, but we don't
   # have an already invoked task.  Yield an archive task to the block which can use it to include files,
   # set options, etc.
   def create_without_task
-    archive(@archive + '.tmp').tap do |task|
+    archive(qualify(@archive, "tmp")).tap do |task|
       yield task if block_given?
       task.invoke
       mv task.name, @archive
@@ -43,9 +44,27 @@ describe 'ArchiveTask', :shared=>true do
   end
 
   def create_for_merge
-    zip(@archive + '.src').include(@files).tap do |task|
+    zip(qualify(@archive, "src")).include(@files).tap do |task|
       yield task
     end
+  end
+
+  def init_dir
+    unless @dir
+      @dir = File.expand_path('test')
+      @files = %w{Test1.txt Text2.html}.map { |file| File.expand_path(file, @dir) }.
+        each { |file| write file, content_for(file) }
+      @empty_dirs = %w{EmptyDir1 EmptyDir2}.map { |file| File.expand_path(file, @dir) }.
+        each { |file| mkdir file }
+    end
+  end
+end
+
+shared_examples_for 'ArchiveTask' do
+  include ArchiveTaskHelpers
+
+  before(:each) do
+    init_dir
   end
 
   it 'should point to archive file' do
@@ -200,10 +219,17 @@ describe 'ArchiveTask', :shared=>true do
     archive(@archive).include(@files.first, :as=>'test/sample').invoke
     inspect_archive { |archive| @files.each { |f| archive['test/sample'].should eql(content_for(@files.first)) } }
   end
-  
+
   it 'should archive directory into specified alias, without using "."' do
     archive(@archive).include(@dir, :as=>'.').invoke
     inspect_archive { |archive| archive.keys.should_not include(".") }
+  end
+
+  it 'should archive directories into specified alias, even if it has the same name' do
+    archive(@archive).include(@dir, :as=>File.basename(@dir)).invoke
+    inspect_archive { |archive|
+      archive.keys.should_not include "#{File.basename(@dir)}"
+    }
   end
 
   it 'should archive file into specified name/path' do
@@ -274,7 +300,7 @@ describe 'ArchiveTask', :shared=>true do
   it 'should expand another archive file with nested exclude pattern' do
     @files = %w{Test1.txt Text2.html}.map { |file| File.join(@dir, "foo", file) }.
       each { |file| write file, content_for(file) }
-    zip(@archive + '.src').include(@dir).tap do |task|
+    zip(qualify(@archive, "src")).include(@dir).tap do |task|
       archive(@archive).merge(task).exclude('test/*')
       archive(@archive).invoke
       inspect_archive.should be_empty
@@ -322,6 +348,22 @@ describe 'ArchiveTask', :shared=>true do
     File.stat(@archive).mtime.should be_close(Time.now, 10)
   end
 
+  it 'should update if a file in a subdir is more recent' do
+    subdir = File.expand_path("subdir", @dir)
+    test3 = File.expand_path("test3.css", subdir)
+
+    mkdir_p subdir
+    write test3, '/* Original */'
+
+    create_without_task { |archive| archive.include(:from => @dir) }
+    inspect_archive { |archive| archive["subdir/test3.css"].should eql('/* Original */') }
+
+    write test3, '/* Refreshed */'
+    File.utime(Time.now + 100, Time.now + 100, test3)
+    archive(@archive).include(:from => @dir).invoke
+    inspect_archive { |archive| archive["subdir/test3.css"].should eql('/* Refreshed */') }
+   end
+
   it 'should do nothing if all files are uptodate' do
     create_without_task { |archive| archive.include(@files) }
     # By touching all files in the past, there's nothing new to update.
@@ -352,10 +394,13 @@ describe 'ArchiveTask', :shared=>true do
   end
 end
 
-
 describe TarTask do
   it_should_behave_like 'ArchiveTask'
-  before { @archive = File.expand_path('test.tar') }
+
+  before(:each) do
+    @archive = File.expand_path('test.tar')
+  end
+
   define_method(:archive) { |file| tar(file) }
 
   def inspect_archive
@@ -371,7 +416,11 @@ end
 
 describe TarTask, ' gzipped' do
   it_should_behave_like 'ArchiveTask'
-  before { @archive = File.expand_path('test.tgz') }
+
+  before(:each) do
+    @archive = File.expand_path('test.tgz')
+  end
+
   define_method(:archive) { |file| tar(file) }
 
   def inspect_archive
@@ -386,11 +435,39 @@ describe TarTask, ' gzipped' do
   end
 end
 
+describe "ZipTask" do
+  include ArchiveTaskHelpers
 
-describe ZipTask do
   it_should_behave_like 'ArchiveTask'
-  before { @archive = File.expand_path('test.zip') }
+
+  before(:each) do
+    init_dir
+    @archive = File.expand_path('test.zip')
+  end
+
   define_method(:archive) { |file| zip(file) }
+
+  after(:each) do
+    checkZip(@archive)
+  end
+
+  # Check for possible corruption using Java's ZipInputStream and Java's "jar" command since
+  # they are stricter than rubyzip
+  def checkZip(file)
+    return unless File.exist?(file)
+    zip = Java.java.util.zip.ZipInputStream.new(Java.java.io.FileInputStream.new(file))
+    zip_entry_count = 0
+    while entry = zip.getNextEntry do
+      # just iterate over all entries
+      zip_entry_count = zip_entry_count + 1
+    end
+    zip.close()
+
+    # jar tool fails with "ZipException: error in opening zip file" if empty
+    if zip_entry_count > 0
+      sh "#{File.join(ENV['JAVA_HOME'], 'bin', 'jar')} tvf #{file}"
+    end
+  end
 
   def inspect_archive
     entries = {}
@@ -425,7 +502,7 @@ describe ZipTask do
     archive(@archive).invoke
     inspect_archive { |archive| archive.keys.should include('code/') }
   end
-  
+
   it 'should have path object that includes empty dirs' do
     archive(@archive).path('code').include(Dir["#{@dir}/*"])
     archive(@archive).invoke
@@ -452,9 +529,8 @@ describe ZipTask do
 
 end
 
-
 describe Unzip do
-  before do
+  before(:each) do
     @zip = File.expand_path('test.zip')
     @dir = File.expand_path('test')
     @files = %w{Test1.txt Text2.html}.map { |file| File.join(@dir, file) }.
@@ -578,7 +654,7 @@ describe Unzip do
       Rake::Task.clear ; rm_rf @target
       unzip(@target=>@zip).include('test/**/*').target.invoke
       FileList[File.join(@target, 'test/path/*')].size.should be(2)
-      
+
       Rake::Task.clear ; rm_rf @target
       unzip(@target=>@zip).include('test/*').target.invoke
       FileList[File.join(@target, 'test/path/*')].size.should be(2)
@@ -695,4 +771,5 @@ describe Unzip do
     task = unzip(@target=>@zip)
     task.from_path('foo').should be(task.path('foo'))
   end
+
 end

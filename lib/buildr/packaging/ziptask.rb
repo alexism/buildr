@@ -13,10 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/packaging/archive'
-
-
 module Buildr
 
   # The ZipTask creates a new Zip file. You can include any number of files and and directories,
@@ -59,14 +55,16 @@ module Buildr
       Zip::ZipOutputStream.open name do |zip|
         seen = {}
         mkpath = lambda do |dir|
-          unless dir == '.' || seen[dir]
-            mkpath.call File.dirname(dir)
-            zip.put_next_entry(dir + '/', compression_level)
-            seen[dir] = true
+          dirname = (dir[-1..-1] =~ /\/$/) ? dir : dir + '/'
+          unless dir == '.' || seen[dirname]
+            mkpath.call File.dirname(dirname)
+            zip.put_next_entry(dirname, compression_level)
+            seen[dirname] = true
           end
         end
 
         file_map.each do |path, content|
+          warn "Warning:  Path in zipfile #{name} contains backslash: #{path}" if path =~ /\\/
           mkpath.call File.dirname(path)
           if content.respond_to?(:call)
             zip.put_next_entry(path, compression_level)

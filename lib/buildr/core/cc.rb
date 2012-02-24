@@ -13,11 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-require 'buildr/core/common'
-require 'buildr/core/project'
-require 'buildr/core/build'
-require 'buildr/core/compile'
-
 module Buildr
   class CCTask < Rake::Task
     attr_accessor :delay
@@ -33,117 +28,112 @@ module Buildr
 
   private
 
+    # run block on sub-projects depth-first, then on this project
+    def each_project(&block)
+      depth_first = lambda do |p|
+        p.projects.each { |c| depth_first.call(c, &block) }
+        block.call(p)
+      end
+      depth_first.call(@project)
+    end
+
     def associate_with(project)
       @project = project
     end
 
     def monitor_and_compile
-      # we don't want to actually fail if our dependencies don't succede
+      # we don't want to actually fail if our dependencies don't succeed
       begin
-        [:compile, 'test:compile'].each { |name| project.task(name).invoke }
-        notify_build_status(true, project)
+        each_project { |p| p.test.compile.invoke }
+        build_completed(project)
       rescue Exception => ex
         $stderr.puts $terminal.color(ex.message, :red)
         $stderr.puts
 
-        notify_build_status(false, project)
+        build_failed(project, ex)
       end
 
-      main_dirs = project.compile.sources.map(&:to_s)
-      test_dirs = project.task('test:compile').sources.map(&:to_s)
-      res_dirs = project.resources.sources.map(&:to_s)
-      
-      main_ext = Buildr::Compiler.select(project.compile.compiler).source_ext.map(&:to_s) unless project.compile.compiler.nil?
-      test_ext = Buildr::Compiler.select(project.task('test:compile').compiler).source_ext.map(&:to_s) unless project.task('test:compile').compiler.nil?
-
-      test_tail = if test_dirs.empty? then '' else ",{#{test_dirs.join ','}}/**/*.{#{test_ext.join ','}}" end
-      res_tail = if res_dirs.empty? then '' else ",{#{res_dirs.join ','}}/**/*" end
-
-      pattern = "{{#{main_dirs.join ','}}/**/*.{#{main_ext.join ','}}#{test_tail}#{res_tail}}"
-
-      times, _ = check_mtime pattern, {}     # establish baseline
-
-      dir_names = (main_dirs + test_dirs + res_dirs).map { |file| strip_filename project, file }
-      if dir_names.length == 1
-        info "Monitoring directory: #{dir_names.first}"
+      dirs = []
+      each_project do |p|
+        dirs += p.compile.sources.map(&:to_s)
+        dirs += p.test.compile.sources.map(&:to_s)
+        dirs += p.resources.sources.map(&:to_s)
+      end
+      if dirs.length == 1
+        info "Monitoring directory: #{dirs.first}"
       else
-        info "Monitoring directories: [#{dir_names.join ', '}]"
+        info "Monitoring directories: [#{dirs.join ', '}]"
       end
-      trace "Monitoring extensions: [#{main_ext.join ', '}]"
+
+      timestamps = lambda do
+        times = {}
+        dirs.each { |d| Dir.glob("#{d}/**/*").map { |f| times[f] = File.mtime f } }
+        times
+      end
+
+      old_times = timestamps.call()
 
       while true
         sleep delay
 
-        times, changed = check_mtime pattern, times
+        new_times = timestamps.call()
+        changed = changed(new_times, old_times)
+        old_times = new_times
+
         unless changed.empty?
           info ''    # better spacing
 
           changed.each do |file|
-            info "Detected changes in #{strip_filename project, file}"
+            info "Detected changes in #{file}"
           end
 
-          in_main = main_dirs.any? do |dir|
-            changed.any? { |file| file.index(dir) == 0 }
+          each_project do |p|
+            # transitively reenable prerequisites
+            reenable = lambda do |t|
+              t = task(t)
+              t.reenable
+              t.prerequisites.each { |c| reenable.call(c) }
+            end
+            reenable.call(p.test.compile)
           end
-
-          in_test = test_dirs.any? do |dir|
-            changed.any? { |file| file.index(dir) == 0 }
-          end
-
-          in_res = res_dirs.any? do |dir|
-            changed.any? { |file| file.index(dir) == 0 }
-          end
-
-          project.task(:compile).reenable if in_main
-          project.task('test:compile').reenable if in_test || in_main
 
           successful = true
           begin
-            project.task(:resources).filter.run if in_res
-            project.task(:compile).invoke if in_main
-            project.task('test:compile').invoke if in_test || in_main
+            each_project { |p| p.test.compile.invoke }
+            build_completed(project)
           rescue Exception => ex
             $stderr.puts $terminal.color(ex.message, :red)
+            build_failed(project, ex)
             successful = false
           end
 
-          notify_build_status(successful, project)
           puts $terminal.color("Build complete", :green) if successful
         end
       end
     end
 
-    def notify_build_status(successful, project)
-       if RUBY_PLATFORM =~ /darwin/ && $stdout.isatty && verbose
-         if successful
-           growl_notify('Completed', 'Your build has completed', project.path_to)
-         else
-           growl_notify('Failed', 'Your build has failed with an error', project.path_to)
-         end
-       end
+    def build_completed(project)
+      Buildr.application.build_completed('Compilation successful', project.path_to)
     end
 
-    def check_mtime(pattern, old_times)
-      times = {}
-      changed = []
+    def build_failed(project, ex = nil)
+      Buildr.application.build_failed('Compilation failed', project.path_to, ex)
+    end
 
-      Dir.glob pattern do |fname|
-        times[fname] = File.mtime fname
-        if old_times[fname].nil? || old_times[fname] < File.mtime(fname)
+    def changed(new_times, old_times)
+      changed = []
+      new_times.each do |(fname,newtime)|
+        if old_times[fname].nil? || old_times[fname] < newtime
           changed << fname
         end
       end
 
       # detect deletion (slower than it could be)
       old_times.each_key do |fname|
-        changed << fname unless times.has_key? fname
+        changed << fname unless new_times.has_key? fname
       end
 
-      [times, changed]
-    end
-
-    def strip_filename(project, name)
-      name.gsub project.base_dir + File::SEPARATOR, ''
+      changed
     end
   end
 
@@ -158,7 +148,6 @@ module Buildr
     before_define do |project|
       cc = CCTask.define_task :cc
       cc.send :associate_with, project
-      project.recursive_task(:cc)
     end
 
     def cc

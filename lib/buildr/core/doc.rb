@@ -74,7 +74,6 @@ module Buildr
       # Returns the documentation tool options.
       attr_reader :options
 
-      
       attr_reader :project # :nodoc:
 
       def initialize(*args) #:nodoc:
@@ -159,6 +158,19 @@ module Buildr
       end
 
       # :call-seq:
+      #   engine?(clazz) => boolean
+      #
+      # Check if the underlying engine is an instance of the given class
+      def engine?(clazz)
+        begin
+          @engine ||= guess_engine if project.compile.language
+        rescue
+          return false
+        end
+        @engine.is_a?(clazz) if @engine
+      end
+
+      # :call-seq:
       #   from(*sources) => self
       #
       # Includes files, directories and projects in the documentation and returns self.
@@ -192,7 +204,9 @@ module Buildr
 
       def source_files #:nodoc:
         @source_files ||= @files.map(&:to_s).map do |file|
-          File.directory?(file) ? FileList[File.join(file, "**/*.#{engine.class.source_ext}")] : file
+          Array(engine.class.source_ext).map do |ext|
+            File.directory?(file) ? FileList[File.join(file, "**/*.#{ext}")] : file
+          end
         end.flatten.reject { |file| @files.exclude?(file) }
       end
 
@@ -221,15 +235,14 @@ module Buildr
       Project.local_task :doc
     end
 
-    before_define do |project|
+    before_define(:doc) do |project|
       DocTask.define_task('doc').tap do |doc|
         doc.send(:associate_with, project)
         doc.into project.path_to(:target, :doc)
-        doc.using :windowtitle=>project.comment || project.name
       end
     end
 
-    after_define do |project|
+    after_define(:doc) do |project|
       project.doc.from project
     end
 

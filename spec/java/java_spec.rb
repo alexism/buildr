@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 unless RUBY_PLATFORM =~ /java/
@@ -41,10 +41,18 @@ unless RUBY_PLATFORM =~ /java/
       ENV_JAVA.replace @old_env_java
     end
   end
+else
+  describe 'JRuby environment' do
+    it 'should enforce a minimum version of jruby' do
+      check =File.read(File.expand_path('../lib/buildr/java/jruby.rb')).match(/JRUBY_MIN_VERSION.*\n.*JRUBY_MIN_VERSION\n/).to_s
+      check.sub!('JRUBY_VERSION', "'0.0.0'")
+      lambda {  eval(check) }.should raise_error(/JRuby must be at least at version /)
+    end
+  end
 end
 
 
-describe Java, '#tools_jar' do
+describe 'Java.tools_jar' do
   before do
     @old_home = ENV['JAVA_HOME']
   end
@@ -55,7 +63,7 @@ describe Java, '#tools_jar' do
       write 'jdk/lib/tools.jar'
       ENV['JAVA_HOME'] = File.expand_path('jdk')
     end
-
+  
     it 'should return the path to tools.jar' do
       Java.tools_jar.should point_to_path('jdk/lib/tools.jar')
     end
@@ -67,7 +75,7 @@ describe Java, '#tools_jar' do
       write 'jdk/lib/tools.jar'
       ENV['JAVA_HOME'] = File.expand_path('jdk/jre')
     end
-
+  
     it 'should return the path to tools.jar' do
       Java.tools_jar.should point_to_path('jdk/lib/tools.jar')
     end
@@ -78,7 +86,7 @@ describe Java, '#tools_jar' do
       Java.instance_eval { @tools_jar = nil }
       ENV['JAVA_HOME'] = File.expand_path('jdk')
     end
-
+  
     it 'should return nil' do
       Java.tools_jar.should be_nil
     end
@@ -89,7 +97,7 @@ describe Java, '#tools_jar' do
   end
 end
 
-describe Java, '#java' do
+describe 'Java#java' do
   before do
     @old_home = ENV['JAVA_HOME']
   end

@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 describe Project do
@@ -496,6 +496,16 @@ describe Buildr, '#project' do
 
   it 'should return a project if exists' do
     foo = define('foo')
+    project('foo').should be(foo)
+  end
+
+  it 'should define a project if a block is given' do
+    foo = project('foo') {}
+    project('foo').should be(foo)
+  end
+
+  it 'should define a project if properties and a block are given' do
+    foo = project('foo', :version => '1.2') {}
     project('foo').should be(foo)
   end
 

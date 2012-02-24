@@ -170,7 +170,7 @@ Before using Scala, you must first @require@ the Scala compiler:
 require 'buildr/scala'
 {% endhighlight %}
 
-By default, Buildr will attempt to use the latest stable release of Scala, which is currently Scala 2.7.7 as of April 2010.  Of course you can configure a specific version of Scala for your project by adding the following entry in @build.yaml@:
+By default, Buildr will attempt to use the latest stable release of Scala, which is currently Scala 2.9.0 as of May 2011.  Of course you can configure a specific version of Scala for your project by adding the following entry in @build.yaml@:
 
 {% highlight yaml %}
 scala.version: 2.8.0.Beta1  # Pick your version
@@ -186,7 +186,7 @@ Buildr.settings.build['scala.version'] = "2.8.0.Beta1"
 You may also determine the version in use by querying the @Scala.version@ attribute:
 
 {% highlight ruby %}
-Scala.version       # => '2.7.7'
+Scala.version       # => '2.8.0'
 {% endhighlight %}
 
 Regardless of how the Scala version is determined, if you have the same Scala version installed on your system and the SCALA_HOME environment variable points to it, then your local installation will be used.   Otherwise, Buildr will download it from the "Scala Tools repository":http://scala-tools.org/ which is automatically enlisted when you @require@ Scala.  The only drawback if you don't have a local installation is the FSC compiler won't be available.
@@ -210,11 +210,11 @@ When using the Scala compiler, if you don't specify the packaging type, it defau
 The Scala compiler supports the following options:
 
 |_. Option        |_. Usage |
-| @:debug@        | Generates bytecode with debugging information.  You can also override this by setting the environment variable @debug@ to @off@. |
+| @:debug@        | If true, generates bytecode with debugging information. Scala 2.9 also accepts: none,source,line,vars,notc. |
 | @:deprecation@  | If true, shows deprecation messages.  False by default. |
+| @:make@         | Make strategy to be used by the compiler (e.g. @:make=>'transitive'@). *Scala 2.8 only* |
 | @:optimise@     | Generates faster bytecode by applying optimisations to the program. |
 | @:other@        | Array of options passed to the compiler (e.g. @:other=>'-Xprint-types'@). |
-| @:make@         | Make strategy to be used by the compiler (e.g. @:make=>'transitive'@).  *Scala 2.8 only* |
 | @:target@       | Bytecode compatibility (e.g. '1.4'). |
 | @:warnings@     | Issue warnings when compiling.  True when running in verbose mode. |
 | @:javac@        | A hash of options passed to the @javac@ compiler verbatim. |
@@ -559,41 +559,3 @@ Supports the following options:
 | @:properties@   | Hash of system properties available to the test case. |
 | @:java_args@    | Arguments passed as is to the JVM. (only when fork is enabled) |
 
-h4.  JtestR
-
-"JtestR":http://jtestr.codehaus.org is a tool that makes it easier to test Java code with state of the art Ruby tools. Using JtestR you can describe your application behaviour using many testing frameworks at the same time.
-
-To use this framework in your project you can select it with @test.using :jtestr@.
-
-You can use the @build.yaml@ settings file to specify a particular version of JtestR (defaults to @0.3.1@).  For example:
-
-{% highlight yaml %}
-jtestr: 0.3.1
-{% endhighlight %}
-
-To customize TestNG/JUnit versions refer to their respective section.
-
-When selected, Buildr will configure JtestR to use your project/testing classpath and will search for the following test patterns for each framework supported by JtestR:
-
-|_. Framework                    |_. Patterns |
-| "RSpec":http://rspec.info      | Files in @src/spec/ruby@ ending with @*_spec.rb@ or @*_story.rb@ |
-| "TestUnit":http://ruby-doc.org/stdlib/libdoc/test/unit/rdoc/classes/Test/Unit.html | Files in @src/spec/ruby@ ending with @*_test.rb@, @*Test.rb@ |
-| "Expectations":http://expectations.rubyforge.org/ | Files in @src/spec/ruby@ ending with @*_expect.rb@ |
-| "JUnit":http://www.junit.org   | Classes from @src/test/java@ that either subclass @junit.framework.TestCase@, include methods annotated with @org.junit.Test@, or test suites annotated with @org.org.junit.runner.RunWith@. |
-| "TestNG":http://testng.org     | Classes from @src/test/java@ annotated with  @org.testng.annotations.Test@ |
-
-If you create a @src/spec/ruby/jtestr_config.rb@ file, it will be loaded by JtestR, just after being configured by Buildr, this way you can configure as described on "JtestR guide":http://jtestr.codehaus.org/Configuration.
-
-p(tip). If you have a @jtestr_config.rb@ file, don't set @JtestR::result_handler@. Buildr uses its (@RSpecResultHandler@)  so that it can know which tests succeeded/failed, this handler is capable of using RSpec formatter classes, so that you can obtain an html report or use a custom rspec formatter with @JtestR@. See the @format@ option.
-
-Supports the following options:
-
-|_. Option        |_. Value |
-| @:config@       | The JtestR config file to be loaded after being configured by Buildr. Defaults to @src/spec/ruby/jtestr_config.rb@. |
-| @:gems@         | Hash of gems needed before running the tests. Keys are gem names, values are the required gem version. An example use of this option would be to require the ci_reporter gem to generate xml reports |
-| @:requires@     | Array of ruby files to require before running the specs |
-| @:format@       | Array of valid RSpec @--format@ option values. Defaults to html report on the @reports@ directory and text progress |
-| @:output@       | File path to output dump. @false@ to supress output |
-| @:fork@         | Run the tests on a new java vm. (enabled unless running on JRuby) |
-| @:properties@   | Hash of system properties available to the test case. (only when fork is enabled) |
-| @:java_args@    | Arguments passed as is to the JVM. (only when fork is enabled) |

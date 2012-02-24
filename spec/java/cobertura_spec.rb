@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), 'test_coverage_helper')
+require File.expand_path(File.join(File.dirname(__FILE__), 'test_coverage_helper'))
 Sandbox.require_optional_extension 'buildr/java/cobertura'
 artifacts(Buildr::Cobertura::dependencies).map(&:invoke)
 
@@ -53,6 +53,11 @@ describe Buildr::Cobertura do
         define('foo') { define('bar') }
         task('foo:bar:cobertura:instrument').invoke
       end
+      
+      it 'should not generate html if projects have no sources' do
+        define('foo') { define('bar') }
+        task('cobertura:html').invoke
+      end
     end
 
     describe 'instrumentation' do
@@ -80,6 +85,28 @@ describe Buildr::Cobertura do
       end
     end
 
-    # TODO add specs for cobertura:check...somehow
+    describe 'check' do
+      before do
+        write 'src/main/java/Foo.java', 'public class Foo { public static boolean returnTrue() {return true;}}'
+        write 'src/test/java/FooTest.java', <<-JAVA
+import static junit.framework.Assert.assertTrue;
+import org.junit.Test;
+
+public class FooTest { 
+  
+  @Test
+  public void testReturnTrue() { 
+    assertTrue(Foo.returnTrue());
+  }
+}
+JAVA
+      end
+      
+      it 'should not raise errors during execution' do
+        define('foo')  { cobertura.include 'Foo' }
+        lambda {task("foo:cobertura:check").invoke}.should_not raise_error
+      end
+      
+    end
   end
 end

@@ -13,11 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/java/tests'
-require 'buildr/java/test_result'
-
-
 module Buildr
 
   # Mixin for test frameworks using src/spec/{lang}
@@ -48,7 +43,7 @@ module Buildr
   module TestFramework::JRubyBased
     extend self
 
-    VERSION = '1.5.1'
+    VERSION = '1.6.2'
 
     class << self
       def version
@@ -76,7 +71,7 @@ module Buildr
       def dependencies
         unless @dependencies
           super
-          unless RUBY_PLATFORM[/java/] && TestFramework::JRubyBased.jruby_installed?
+          if !RUBY_PLATFORM[/java/] && !TestFramework::JRubyBased.jruby_installed?
             @dependencies |= TestFramework::JRubyBased.dependencies
           end
         end
@@ -107,8 +102,10 @@ module Buildr
       else
         cmd_options = task.options.only(:properties, :java_args)
         cmd_options.update(:classpath => dependencies, :project => task.project)
-        jruby runner.file, tests, cmd_options
+        jruby runner.file, tests, cmd_options rescue nil
       end
+
+      fail "Missing result YAML file: #{runner.result}" unless File.exist? runner.result
 
       result = YAML.load(File.read(runner.result))
       if Exception === result
@@ -145,11 +142,13 @@ module Buildr
       cmd_options = java_args.last
       project = cmd_options.delete(:project)
       cmd_options[:classpath] ||= []
-      Dir.glob(File.join(jruby_home, 'lib', '*.jar')) { |jar| cmd_options[:classpath] << jar }
+      if jruby_home && jruby_home != ''
+        Dir.glob(File.join(jruby_home, 'lib', '*.jar')) { |jar| cmd_options[:classpath] << jar }
+        cmd_options[:properties]['jruby.home'] = jruby_home
+      end
       cmd_options[:java_args] ||= []
       cmd_options[:java_args] << '-Xmx512m' unless cmd_options[:java_args].detect {|a| a =~ /^-Xmx/}
       cmd_options[:properties] ||= {}
-      cmd_options[:properties]['jruby.home'] = jruby_home
       Java::Commands.java(*java_args)
     end
 
@@ -197,7 +196,8 @@ module Buildr
       runner.gems ||= {}
       runner.rspec ||= ['--format', 'progress', '--format', "html:#{runner.html_report}"]
       runner.format.each { |format| runner.rspec << '--format' << format } if runner.format
-      runner.rspec.push '--format', "Buildr::TestFramework::TestResult::YamlFormatter:#{runner.result}"
+      runner.rspec.push '--format', "Buildr::TestFramework::TestResult::YamlFormatter"
+      runner.rspec.push '-o', runner.result
       runner
     end
 
@@ -240,8 +240,8 @@ module Buildr
 
     def runner_config
       runner = super
-      runner.gems.update 'rspec' => '>0'
-      runner.requires.unshift 'spec'
+      runner.gems.update 'rspec' => '~> 2.1.0'
+      runner.requires.unshift 'rspec'
       runner
     end
 
@@ -258,14 +258,12 @@ module Buildr
         <% else %>
           output = STDOUT
         <% end %>
-        parser = ::Spec::Runner::OptionParser.new(output, output)
+        parser = ::RSpec::Core::Parser.new
         argv = <%= runner.rspec.inspect %> || []
         argv.push *<%= tests.inspect %>
-        parser.order!(argv)
-        $rspec_options = parser.options
 
         Buildr::TestFramework::TestResult::Error.guard('<%= runner.result %>') do
-          ::Spec::Runner::CommandLine.run($rspec_options)
+          ::RSpec::Core::CommandLine.new(argv).run(output, output)
         end
         exit 0 # let buildr figure the result from the yaml file
       }
@@ -273,114 +271,6 @@ module Buildr
     end
 
   end
-
-  # <a href="http://jtestr.codehaus.org/">JtestR</a> is a framework for BDD and TDD using JRuby and ruby tools.
-  # To test your project with JtestR use:
-  #   test.using :jtestr
-  #
-  #
-  # Support the following options:
-  # * :config     -- path to JtestR config file. defaults to @spec/ruby/jtestr_config.rb@
-  # * :gems       -- A hash of gems to install before running the tests.
-  #                  The keys of this hash are the gem name, the value must be the required version.
-  # * :requires   -- A list of ruby files to require before running the specs
-  #                  Mainly used if an rspec format needs to require some file.
-  # * :format     -- A list of valid Rspec --format option values. (defaults to 'progress')
-  # * :output     -- File path to output dump. @false@ to supress output
-  # * :fork       -- Create a new JavaVM to run the tests on
-  # * :properties -- Hash of properties passed to the test suite.
-  # * :java_args  -- Arguments passed to the JVM.
-  class JtestR < TestFramework::JavaBDD
-    @lang = :ruby
-    @bdd_dir = :spec
-
-    include TestFramework::JRubyBased
-
-    VERSION = '0.5'
-
-    # pattern for rspec stories
-    STORY_PATTERN    = /_(steps|story)\.rb$/
-    # pattern for test_unit files
-    TESTUNIT_PATTERN = /(_test|Test)\.rb$|(tc|ts)[^\\\/]+\.rb$/
-    # pattern for test files using http://expectations.rubyforge.org/
-    EXPECT_PATTERN   = /_expect\.rb$/
-
-    TESTS_PATTERN = [STORY_PATTERN, TESTUNIT_PATTERN, EXPECT_PATTERN] + RSpec::TESTS_PATTERN
-
-    class << self
-
-      def version
-        Buildr.settings.build['jtestr'] || VERSION
-      end
-
-      def dependencies
-        unless @dependencies
-          super
-          @dependencies |= ["org.jtestr:jtestr:jar:#{version}"] +
-                           JUnit.dependencies + TestNG.dependencies
-        end
-        @dependencies
-      end
-
-      def applies_to?(project) #:nodoc:
-        File.exist?(project.path_to(:source, bdd_dir, lang, 'jtestr_config.rb')) ||
-          Dir[project.path_to(:source, bdd_dir, lang, '**/*.rb')].any? { |f| TESTS_PATTERN.any? { |r| r === f } } ||
-          JUnit.applies_to?(project) || TestNG.applies_to?(project)
-      end
-
-    private
-      def const_missing(const)
-        return super unless const == :REQUIRES # TODO: remove in 1.5
-        Buildr.application.deprecated 'Please use JtestR.dependencies/.version instead of JtestR::REQUIRES/VERSION'
-        dependencies
-      end
-
-    end
-
-    def initialize(task, options) #:nodoc:
-      super
-      [:test, :spec].each do |usage|
-        java_tests = task.project.path_to(:source, usage, :java)
-        task.compile.from java_tests if File.directory?(java_tests)
-        resources = task.project.path_to(:source, usage, :resources)
-        task.resources.from resources if File.directory?(resources)
-      end
-    end
-
-    def user_config
-      options[:config] || task.project.path_to(:source, bdd_dir, lang, 'jtestr_config.rb')
-    end
-
-    def tests(dependencies) #:nodoc:
-      dependencies |= [task.compile.target.to_s]
-      types = { :story => STORY_PATTERN, :rspec => RSpec::TESTS_PATTERN,
-                :testunit => TESTUNIT_PATTERN, :expect => EXPECT_PATTERN }
-      tests = types.keys.inject({}) { |h, k| h[k] = []; h }
-      tests[:junit] = JUnit.new(task, {}).tests(dependencies)
-      tests[:testng] = TestNG.new(task, {}).tests(dependencies)
-      Dir[task.project.path_to(:source, bdd_dir, lang, '**/*.rb')].each do |rb|
-        type = types.find { |k, v| Array(v).any? { |r| r === rb } }
-        tests[type.first] << rb if type
-      end
-      @jtestr_tests = tests
-      tests.values.flatten
-    end
-
-    def runner_config
-      runner = super
-      # JtestR 0.3.1 comes with rspec 1.1.4 (and any other jtestr dependency) included,
-      # so the rspec version used depends on the jtestr jar.
-      runner.requires.unshift 'jtestr'
-      runner
-    end
-
-    def runner_content(binding)
-      runner_erb = File.join(File.dirname(__FILE__), 'jtestr_runner.rb.erb')
-      Filter::Mapper.new(:erb, binding).transform(File.read(runner_erb), runner_erb)
-    end
-
-  end
-
 
   # JBehave is a Java BDD framework. To use in your project:
   #   test.using :jbehave
@@ -451,5 +341,5 @@ module Buildr
 end
 
 Buildr::TestFramework << Buildr::RSpec
-Buildr::TestFramework << Buildr::JtestR
 Buildr::TestFramework << Buildr::JBehave
+

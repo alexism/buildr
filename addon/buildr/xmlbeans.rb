@@ -13,11 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/java'
-require 'buildr/java/ant'
-
-
 module Buildr
 
   # Provides XMLBeans schema compiler. Require explicitly using <code>require "buildr/xmlbeans"</code>.
@@ -42,7 +37,7 @@ module Buildr
 
       def compile(*args)
         options = Hash === args.last ? args.pop : {}
-        options[:verbose] ||= Rake.application.options.trace || false
+        options[:verbose] ||= trace?(:xmlbeans)
         rake_check_options options, :verbose, :noop, :javasource, :jar, :compile, :output, :xsb
         puts "Running XMLBeans schema compiler" if verbose
         Buildr.ant "xmlbeans" do |ant|

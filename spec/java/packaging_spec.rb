@@ -14,8 +14,8 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
-require File.join(File.dirname(__FILE__), '../packaging/packaging_helper')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'packaging', 'packaging_helper'))
 
 
 describe Project, '#manifest' do
@@ -120,7 +120,7 @@ shared_examples_for 'package with manifest' do
       manifest.main['bar'].should eql('Bar')
     end
   end
-  
+
   it 'should close the temporary file used for packaging the MANIFEST.MF file' do
     package_with_manifest 'Foo'=>1, :bar=>'Bar'
     package = project('foo').package(@packaging)
@@ -197,7 +197,7 @@ shared_examples_for 'package with manifest' do
       manifest.main['Meta'].should eql('data')
     end
   end
-  
+
   it 'should give 644 permissions to the manifest' do
     package_with_manifest  [ {}, { 'Name'=>'first', :Foo=>'first', :bar=>'second' } ]
     package ||= project('foo').package(@packaging)
@@ -346,7 +346,7 @@ describe Project, '#meta_inf' do
 end
 
 
-describe 'package with meta_inf', :shared=>true do
+shared_examples_for 'package with meta_inf' do
 
   def package_with_meta_inf(meta_inf = nil)
     packaging = @packaging
@@ -440,7 +440,7 @@ describe Packaging, 'jar' do
       (entries_to_s.first == 'META-INF/MANIFEST.MF' || entries_to_s[1] == 'META-INF/MANIFEST.MF').should be_true
     end
   end
-  
+
   it 'should use files from compile directory if nothing included' do
     write 'src/main/java/Test.java', 'class Test {}'
     define('foo', :version=>'1.0') { package(:jar) }
@@ -491,7 +491,7 @@ describe Packaging, 'jar' do
       define('foo', :version=>'1.0') { package(:jar).with(nil) }
     }.should raise_error
   end
-  
+
   it 'should exclude resources when ordered to do so' do
     write 'src/main/resources/foo.xml', ''
     foo = define('foo', :version => '1.0') { package(:jar).exclude('foo.xml')}
@@ -500,7 +500,7 @@ describe Packaging, 'jar' do
       jar.entries.map(&:to_s).sort.should_not include('foo.xml')
     end
   end
-    
+
 end
 
 
@@ -567,12 +567,19 @@ describe Packaging, 'war' do
   end
 
   it 'should accept file from :libs option' do
+    write 'lib/foo.jar'
+    define('foo', :version=>'1.0') { package(:war).libs << 'lib/foo.jar' }
+    inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/foo.jar') }
+  end
+
+
+  it 'should accept artifacts from :libs option' do
     make_jars
     define('foo', :version=>'1.0') { package(:war).with(:libs=>'group:id:jar:1.0') }
     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar') }
   end
 
-  it 'should accept file from :libs option' do
+  it 'should accept artifacts from :libs option' do
     make_jars
     define('foo', :version=>'1.0') { package(:war).with(:libs=>['group:id:jar:1.0', 'group:id:jar:2.0']) }
     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar', 'WEB-INF/lib/id-2.0.jar') }
@@ -583,20 +590,44 @@ describe Packaging, 'war' do
     define('foo', :version=>'1.0') { compile.with 'group:id:jar:1.0', 'group:id:jar:2.0' ; package(:war) }
     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar', 'WEB-INF/lib/id-2.0.jar') }
   end
-  
+
   it 'should use artifacts from compile classpath if no libs specified, leaving the user specify which to exclude as files' do
     make_jars
     define('foo', :version=>'1.0') { compile.with 'group:id:jar:1.0', 'group:id:jar:2.0' ; package(:war).path('WEB-INF/lib').exclude('id-2.0.jar')  }
     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar') }
   end
-  
+
   it 'should use artifacts from compile classpath if no libs specified, leaving the user specify which to exclude as files with glob expressions' do
     make_jars
     define('foo', :version=>'1.0') { compile.with 'group:id:jar:1.0', 'group:id:jar:2.0' ; package(:war).path('WEB-INF/lib').exclude('**/id-2.0.jar')   }
     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar') }
   end
-  
-  
+
+  it 'should exclude files regardless of the path where they are included, using wildcards' do
+    make_jars
+    define('foo', :version=>'1.0') { compile.with 'group:id:jar:1.0', 'group:id:jar:2.0' ; package(:war).exclude('**/id-2.0.jar')   }
+    inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar') }
+  end
+
+  it 'should exclude files regardless of the path where they are included, specifying target path entirely' do
+     make_jars
+     define('foo', :version=>'1.0') { compile.with 'group:id:jar:1.0', 'group:id:jar:2.0' ; package(:war).exclude('WEB-INF/lib/id-2.0.jar')   }
+     inspect_war { |files| files.should include('META-INF/MANIFEST.MF', 'WEB-INF/lib/id-1.0.jar') }
+   end
+
+  it 'should exclude files regardless of the path where they are included for war files' do
+     write 'src/main/java/com/example/included/Test.java', 'package com.example.included; class Test {}'
+     write 'src/main/java/com/example/excluded/Test.java', 'package com.example.excluded; class Test {}'
+     define('foo', :version=>'1.0') do
+       package(:war).enhance do |war|
+         war.exclude('WEB-INF/classes/com/example/excluded/**.class')
+       end
+     end
+     inspect_war do |files|
+       files.should include('WEB-INF/classes/com/example/included/Test.class')
+       files.should_not include('WEB-INF/classes/com/example/excluded/Test.class')
+     end
+   end
 
   it 'should include only specified libraries' do
     define 'foo', :version=>'1.0' do
@@ -745,6 +776,39 @@ describe Packaging, 'ear' do
       package(:ear).display_name = 'bar'
     end
     inspect_application_xml { |xml| xml.get_text('/application/display-name').should == 'bar' }
+  end
+
+  it 'should set description in application.xml to project comment if not specified' do
+    desc "MyDescription"
+    define 'foo', :version=>'1.0' do
+      package(:ear)
+    end
+    inspect_application_xml { |xml| xml.get_text('/application/description').should == 'MyDescription' }
+  end
+
+  it 'should not set description in application.xml if not specified and no project comment' do
+    define 'foo', :version=>'1.0' do
+      package(:ear)
+    end
+    inspect_application_xml { |xml| xml.get_text('/application/description').should be_nil }
+  end
+
+  it 'should set description in application.xml if specified' do
+    define 'foo', :version=>'1.0' do
+      package(:ear).description = "MyDescription"
+    end
+    inspect_application_xml { |xml| xml.get_text('/application/description').should == 'MyDescription' }
+  end
+
+  it 'should add security-roles to application.xml if given' do
+    define 'foo', :version=>'1.0' do
+	  package(:ear).security_roles << {:id=>'sr1',
+		:description=>'System Administrator', :name=>'systemadministrator'}
+	end
+	inspect_application_xml do |xml|
+		xml.get_text("/application/security-role[@id='sr1']/description").to_s.should eql('System Administrator')
+		xml.get_text("/application/security-role[@id='sr1']/role-name").to_s.should eql('systemadministrator')
+	end
   end
 
   it 'should map WARs to /war directory' do
@@ -1072,21 +1136,30 @@ end
 
 describe Packaging, 'sources' do
   it_should_behave_like 'packaging'
-  before { @packaging, @package_type = :sources, :zip }
+  before { @packaging, @package_type = :sources, :jar }
 
-  it 'should create package of type :zip and classifier \'sources\'' do
+  it 'should create package of type :jar and classifier \'sources\'' do
     define 'foo', :version=>'1.0' do
-      package(:sources).type.should eql(:zip)
+      package(:sources).type.should eql(:jar)
       package(:sources).classifier.should eql('sources')
-      package(:sources).name.should match(/foo-1.0-sources.zip$/)
+      package(:sources).name.should match(/foo-1.0-sources.jar$/)
     end
   end
 
-  it 'should contain source files' do
+  it 'should contain source and resource files' do
     write 'src/main/java/Source.java'
+    write 'src/main/resources/foo.properties', 'foo=bar'
     define('foo', :version=>'1.0') { package(:sources) }
     project('foo').task('package').invoke
     project('foo').packages.first.should contain('Source.java')
+    project('foo').packages.first.should contain('foo.properties')
+  end
+
+  it 'should create sources jar if resources exists (but not sources)' do
+    write 'src/main/resources/foo.properties', 'foo=bar'
+    define('foo', :version=>'1.0') { package(:sources) }
+    project('foo').package(:sources).invoke
+    project('foo').packages.first.should contain('foo.properties')
   end
 
   it 'should be a ZipTask' do
@@ -1096,16 +1169,15 @@ describe Packaging, 'sources' do
   end
 end
 
-
 describe Packaging, 'javadoc' do
   it_should_behave_like 'packaging'
-  before { @packaging, @package_type = :javadoc, :zip }
+  before { @packaging, @package_type = :javadoc, :jar }
 
   it 'should create package of type :zip and classifier \'javadoc\'' do
     define 'foo', :version=>'1.0' do
-      package(:javadoc).type.should eql(:zip)
+      package(:javadoc).type.should eql(:jar)
       package(:javadoc).classifier.should eql('javadoc')
-      package(:javadoc).name.pathmap('%f').should eql('foo-1.0-javadoc.zip')
+      package(:javadoc).name.pathmap('%f').should eql('foo-1.0-javadoc.jar')
     end
   end
 
@@ -1131,7 +1203,6 @@ describe Packaging, 'javadoc' do
   end
 end
 
-
 shared_examples_for 'package_with_' do
 
   def prepare(options = {})
@@ -1148,9 +1219,9 @@ shared_examples_for 'package_with_' do
     projects.select { |project| project.packages.first }.map(&:name)
   end
 
-  it 'should create package of type zip with classifier' do
+  it 'should create package of the right packaging with classifier' do
     prepare
-    project('foo').packages.first.to_s.should =~ /foo-1.0-#{@packaging}.zip/
+    project('foo').packages.first.to_s.should =~ /foo-1.0-#{@packaging}.#{@ext}/
   end
 
   it 'should create package for projects that have source files' do
@@ -1186,10 +1257,10 @@ end
 
 describe 'package_with_sources' do
   it_should_behave_like 'package_with_'
-  before { @packaging = :sources }
+  before { @packaging, @ext = :sources, 'jar' }
 end
 
 describe 'package_with_javadoc' do
   it_should_behave_like 'package_with_'
-  before { @packaging = :javadoc }
+  before { @packaging, @ext = :javadoc, 'jar' }
 end

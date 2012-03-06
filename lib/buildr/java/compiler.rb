@@ -13,13 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/core/project'
-require 'buildr/core/common'
-require 'buildr/core/compile'
-require 'buildr/packaging'
-
-
 module Buildr
   module Compiler
 
@@ -76,7 +69,7 @@ module Buildr
       def javac_args #:nodoc:
         args = []
         args << '-nowarn' unless options[:warnings]
-        args << '-verbose' if Buildr.application.options.trace
+        args << '-verbose' if trace? :javac
         args << '-g' if options[:debug]
         args << '-deprecation' if options[:deprecation]
         args << '-source' << options[:source].to_s if options[:source]
@@ -109,7 +102,7 @@ module Buildr
     def apt(*sources)
       sources = compile.sources if sources.empty?
       file(path_to(:target, 'generated/apt')=>sources) do |task|
-        cmd_args = [ Buildr.application.options.trace ? '-verbose' : '-nowarn' ]
+        cmd_args = [ trace?(:apt) ? '-verbose' : '-nowarn' ]
         cmd_args << '-nocompile' << '-s' << task.name
         cmd_args << '-source' << compile.options.source if compile.options.source
         classpath = Buildr.artifacts(compile.dependencies).map(&:to_s).each { |t| task(t).invoke }

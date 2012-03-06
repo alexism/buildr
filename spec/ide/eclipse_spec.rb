@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 JAVA_CONTAINER   = Buildr::Eclipse::Java::CONTAINER
@@ -58,6 +58,13 @@ module EclipseHelper
   def sourcepath_for_path(path)
     classpath_xml_elements.collect("classpathentry[@kind='var',@path='#{path}']") do |n|
       n.attributes['sourcepath'] || 'no source artifact'
+    end
+  end
+
+  # <classpathentry path="PATH" javadocpath="RETURNED_VALUE" kind="var"/>
+  def javadocpath_for_path(path)
+    classpath_xml_elements.collect("classpathentry[@kind='var',@path='#{path}']") do |n|
+      n.attributes['javadocpath'] || 'no javadoc artifact'
     end
   end
 
@@ -107,6 +114,15 @@ describe Buildr::Eclipse do
         File.open('.project') do |f|
           REXML::Document.new(f).root.
             elements.collect("name") { |e| e.text }.should == ['foo']
+        end
+      end
+
+      it 'should use eclipse project name if specified' do
+        define('foo') { eclipse.name = 'bar' }
+        task('eclipse').invoke
+        File.open('.project') do |f|
+          REXML::Document.new(f).root.
+            elements.collect("name") { |e| e.text }.should == ['bar']
         end
       end
 
@@ -165,6 +181,32 @@ describe Buildr::Eclipse do
         end
       end
 
+      it 'should use eclipse name for child project if set' do
+        mkdir 'foo'
+        define('myproject') {
+          project.version = '1.0'
+          define('foo') { eclipse.name = 'bar'; compile.using(:javac); package :jar }
+        }
+        task('eclipse').invoke
+        File.open(File.join('foo', '.project')) do |f|
+          REXML::Document.new(f).root.
+            elements.collect("name") { |e| e.text }.should == ['bar']
+        end
+      end
+
+      it 'should use short name for child project if eclipse.options.short_names = true' do
+        mkdir 'foo'
+        define('myproject') {
+          project.version = '1.0'
+          eclipse.options.short_names = true
+          define('foo') { compile.using(:javac); package :jar }
+        }
+        task('eclipse').invoke
+        File.open(File.join('foo', '.project')) do |f|
+          REXML::Document.new(f).root.
+            elements.collect("name") { |e| e.text }.should == ['foo']
+        end
+      end
     end
 
     describe 'scala project' do
@@ -340,7 +382,7 @@ MANIFEST
         write 'src/test/java/Test.java'
       end
 
-      describe 'source', :shared=>true do
+      shared_examples_for 'source' do
         it 'should ignore CVS and SVN files' do
           define('foo')
           classpath_sources('excluding').each do |excluding_attribute|
@@ -465,6 +507,21 @@ MANIFEST
             elements.collect("classpathentry[@kind='src']") { |n| n.attributes['path'] }.should include('/myproject-foo')
         end
       end
+
+      it 'should use eclipse name in its classpath if set' do
+        mkdir 'foo'
+        mkdir 'bar'
+        define('myproject') {
+          project.version = '1.0'
+          define('foo') { eclipse.name = 'eclipsefoo'; package :jar }
+          define('bar') { eclipse.name = 'eclipsebar'; compile.using(:javac).with project('foo'); }
+        }
+        task('eclipse').invoke
+        File.open(File.join('bar', '.classpath')) do |f|
+          REXML::Document.new(f).root.
+            elements.collect("classpathentry[@kind='src']") { |n| n.attributes['path'] }.should include('/eclipsefoo')
+        end
+      end
     end
   end
 
@@ -527,6 +584,11 @@ MANIFEST
     it 'should have a source artifact reference in the .classpath file' do
       sourcepath_for_path('M2_REPO/com/example/library/2.0/library-2.0.jar').
         should == ['M2_REPO/com/example/library/2.0/library-2.0-sources.jar']
+    end
+
+    it 'should have a javadoc artifact reference in the .classpath file' do
+      javadocpath_for_path('M2_REPO/com/example/library/2.0/library-2.0.jar').
+        should == ['M2_REPO/com/example/library/2.0/library-2.0-javadoc.jar']
     end
   end
 

@@ -78,7 +78,37 @@ Buildr supports several different shell providers, and the framework is flexible
 
 Note that some of these shells impose certain requirements to enable use.  The Groovy shell requires the @GROOVY_HOME@ environment variable to point to the Groovy install path.  The Clojure REPL makes a similar requirement of @CLOJURE_HOME@.  The JRuby and Scala shells will use @JRUBY_HOME@ and @SCALA_HOME@ respectively if they are defined.  However, if these environment variables are not defined, the relevant JAR files will be automatically downloaded from the appropriate Maven2 repository.
 
-h3. JavaRebel Integration
+h3. Verbosity and Tracing
+
+By default, Buildr is moderately verbose, meaning that it attempts to give you enough context into what's happening during the build.
+
+It's possible to silence Buildr if you're inconvenienced by its default verbosity by issuing,
+
+{% highlight sh %}
+$ buildr --silent
+{% endhighlight %}
+
+On the other hand, if you want Buildr to give you more context in order to trace what's happening, you can use the @-t@ options:
+
+{% highlight sh %}
+$ buildr -t
+{% endhighlight %}
+
+Using @-t@ will also display backtraces if and when they occur.
+
+Many components can be individually configured to display more output if you're debugging a specific area of your build.  For instance, you could use @--trace=javac,groovyc@ to enable tracing of the Java and Groovy compilers:
+
+{% highlight sh %}
+$ buildr --trace=javac,groovyc
+{% endhighlight %}
+
+If you don't know which tracing category you need to enable or if you want a full firehose worth of traces, you can enable all traces:
+
+{% highlight sh %}
+$ buildr --trace=all
+{% endhighlight %}
+
+h3(#javarebel). JavaRebel Integration
 
 "JavaRebel":http://www.zeroturnaround.com/javarebel is a live bytecode reloading solution by Zero Turnaround.  It's a lot like the hot code reload feature found in many Java IDE debuggers (like Eclipse and IntelliJ), but capable of handling things like member addition or removal and new class definition.  The tool itself is commercial and works with any JVM language, but they do offer a free license for use with Scala classes only.
 
@@ -104,7 +134,7 @@ Running java scala.tools.nsc.MainGenericRunner
  (c) Copyright Webmedia, Ltd, 2007-2009. All rights reserved.
 
  This product is licensed to Daniel Spiewak
- for personal use only. 
+ for personal use only.
 
 #############################################################
 
@@ -114,7 +144,60 @@ Type :help for more information.
 
 scala> </pre>
 
-Note that Buildr does *not* check to make sure that you have a valid JavaRebel license, so you may end up launching with JavaRebel configured but without the ability to use it (in which case, JavaRebel will print a notification). 
+Note that Buildr does *not* check to make sure that you have a valid JavaRebel license, so you may end up launching with JavaRebel configured but without the ability to use it (in which case, JavaRebel will print a notification).
+
+h2(#run). Running Your Application
+
+The @run@ task lets you easily run programs from your buildfile, such as launching your own application.
+
+In its simplest form, you simply define the main class of your Java application,
+
+{% highlight ruby %}
+define 'my-project' do
+  compile.with COMMONS_IO, HTTPCLIENT
+  run.using :main => "org.example.Main"
+end
+{% endhighlight %}
+
+And then run,
+
+{% highlight ruby %}
+~/my-project$ buildr run
+{% endhighlight %}
+
+which would launch your application using the project's compile classpath.
+
+It's also possible to pass arguments to the JVM using the @:java_args@ option:
+
+{% highlight ruby %}
+  run.using :main => "org.example.Main",
+            :java_args => ["-server"]
+{% endhighlight %}
+
+If your application requires arguments, you can pass in an array of values for the @:main@ option, or provide a set of system properties using @:properties@.
+
+{% highlight ruby %}
+  run.using :main => ["org.example.Main", "-t", "input.txt"],
+            :properties => { :debug => "true" }
+{% endhighlight %}
+
+The @run@ task is a local task, which means that Buildr will automatically pick the @run@ task matching the project in the current directory.  Executing the following command:
+
+{% highlight ruby %}
+~/my-project/subproject$ buildr run
+{% endhighlight %}
+
+will run the @my-project:subproject:run@ task, assuming @my-project@ is your top-level project.
+
+Here is a summary of @run.using@ options,
+
+|_. Option |_. Description ... |
+| @:main@   | The java main class, e.g. "com.example.Main". Can also be an array if the main class requires arguments. |
+| @:properties@   | A hash of system properties to be passed to java. |
+| @:java_args@ | An array of additional parameters to pass to java |
+| @:classpath@   | An array of additional classpath elements (i.e. artifacts, files, etc.). By default, the @run@ task automatically uses the @compile.dependencies@, @test.dependencies@ and @test.compile.target@ of your project. |
+
+p(note). The @run@ task also detects and uses JavaRebel if it's available.  See the "JavaRebel":#javarebel section for details.
 
 h2(#gems).  Using Gems
 
@@ -134,7 +217,7 @@ Use the @build.yaml@ file to specify these dependencies (see "Build Settings":se
 
 {% highlight yaml %}
 # This project requires the following gems
-gems: 
+gems:
   # Suppose we want to notify developers when testcases fail.
   - buildr-twitter-notifier-addon >=1
   # we test with ruby mock objects
@@ -228,9 +311,13 @@ $ dbuildr clean compile
 
 The @dbuildr@ command will start the BuildrServer if there isn't one already running.  Subsequent calls to dbuildr will act as the client and invoke the tasks you provide to the server.  If the buildfile has been modified it will be reloaded on the BuildrServer.
 
-h2(#growl). Growl, Qube
+h2(#notifications). Notifications: Growl, Libnotify, Qube
 
-For OS X users, Buildr supports "Growl":http://growl.info/ out of the box to send "completed" and "failed" notifications to the user.
+Buildr support sending notifications when the build completes or fails, such as displaying the outcome message in an overlaid window on top of other applications.
+
+For OS X users, Buildr supports "Growl":http://growl.info/ out of the box by using the Ruby Cocoa bindings.
+
+For Debian-based Linux users, Buildr supports notifications via the "notify-send":http://manpages.ubuntu.com/manpages/gutsy/man1/notify-send.1.html command which is part of the "libnotify-bin":"http://packages.debian.org/search?keywords=libnotify-bin" package.  Just make sure `notify-send` is installed and on your path is on your `PATH`.
 
 For other platforms or if you want to notify the user differently, Buildr offers two extension points:
 
@@ -240,7 +327,7 @@ For other platforms or if you want to notify the user differently, Buildr offers
 Here is an example using these extension points to send notifications using "Qube":http://launchpad.net/qube:
 
 {% highlight ruby %}
-# Send notifications using Qube 
+# Send notifications using Qube
 notify = lambda do |type, title, message|
   param = case type
     when 'completed'; '-i'
@@ -249,12 +336,12 @@ notify = lambda do |type, title, message|
   end
   system "qube #{param} #{title.inspect} #{message.inspect}"
 end
-  
-Buildr.application.on_completion do |title, message| 
+
+Buildr.application.on_completion do |title, message|
   notify['completed', title, message]
 end
-Buildr.application.on_failure do |title, message, ex| 
-  notify['failed', title, message] 
+Buildr.application.on_failure do |title, message, ex|
+  notify['failed', title, message]
 end
 {% endhighlight %}
 
@@ -300,14 +387,358 @@ If you use IntelliJ IDEA, you can generate project files by issuing:
 $ buildr idea
 {% endhighlight %}
 
-It will generate a @.iml@ file for every project (or subproject) and a @.ipr@ that you can directly open for the root project.  To allow IntelliJ Idea to resolve external dependencies properly, you will need to add a @M2_REPO@ variable pointing to your Maven2 repository directory (@Settings / Path Variables@).
+This task will generate a @.iml@ file for every project (or subproject) and a @.ipr@ that you can directly open for the root project.
 
-If you're using IDEA 7 or later, use the @buildr idea7x@ task instead.  This task creates the proper @.ipr@ and @.iml@ files for IDEA version 7.  It includes the @-7x@ suffix in the generated files, so you can use the @idea@ and @idea7x@ tasks side by side on the same project.
+The generated project files can be removed by issuing:
+
+{% highlight sh %}
+$ buildr idea:clean
+{% endhighlight %}
+
+The idea task generates the project files based on the settings of each project and idea extension specific settings. The main and test source trees are added to the @.iml@ file for each project as are the respective resource directories. The target and report directories are excluded from the project. If the project files exist on the file system the extension will replace specific component sections in the xml with the generated component configurations.
+
+Dependencies come in two forms. Dependencies on other projects and dependencies on external jars. Dependencies on other projects are added as module dependencies in the @.iml@ while jars are added as regular file dependencies. Dependencies are exported from the @.iml@ file if they are compile dependencies. If a artifact that matches dependency but has a classifier of 'sources' is present then it is configured as the source for the dependency. Note: Use "buildr artifacts:sources" to download the source for dependencies.
+
+h3. Idea Specific Directives
+
+The extension specific settings of sub-projects inherit the parent projects settings unless overwritten.
+
+h4. Project file naming
+
+The extension will use the last element of the projects name when generating the @.ipr@ and @.iml@ files. i.e. A project named "foo" will generate "foo.iml" and "foo.ipr" while a project named "foo:bar" will generate "bar/bar.iml" and no ipr. (The @.ipr@ project files are only generated for the base project). The name can be modified by setting the "ipr.suffix" or "iml.suffix" settings which specifies the suffix appended to the file names. The user can also override the name completely by setting "ipr.id" or "iml.id".
+
+h5. Example: Setting id
+
+{% highlight ruby %}
+define "foo" do
+  ipr.id = "beep"
+  define "bar" do
+    iml.id = "baz"
+  end
+end
+{% endhighlight %}
+
+Will generate:
+
+<pre>
+beep.ipr
+foo.iml
+bar/baz.iml
+</pre>
+
+h5. Example: Setting suffix
+
+{% highlight ruby %}
+define "foo" do
+  ipr.suffix = "-suffix1"
+  iml.suffix = "-suffix2"
+  define "bar"
+end
+{% endhighlight %}
+
+Will generate:
+
+<pre>
+foo-suffix1.ipr
+foo-suffix2.iml
+bar/bar-suffix2.iml
+</pre>
+
+h4. Disabling project file generation
+
+The extension will not generate an iml file for a project if the "project.no_iml" method is invoked. Generation of ipr files can be disabled by invoking the method "project.no_ipr".
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  project.no_ipr
+  define "bar" do
+    project.no_iml
+  end
+end
+{% endhighlight %}
+
+Will generate:
+
+<pre>
+foo.iml
+</pre>
+
+h4. Disabling generation of content section in .iml file
+
+The extension will not generate a content section in an iml file if the "iml.skip_content!" method is invoked. This can be useful if a project is just exporting dependencies and has no associated source code. This may also be of use in scenarios where the build is repackaging an existing jar with more meta-data or the project is just a container for other projects.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  iml.skip_content!
+end
+{% endhighlight %}
+
+h4. VCS Integration
+
+The extension will attempt to guess the VCS type of the project by looking for a @.svn@ or @.git@ directory in the base projects directory. If either of these are set it will configure the component as appropriate. Otherwise the user will need to manually specify the project to one of either 'Git' or 'svn' using the ipr.vcs setting.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  ipr.vcs = 'Git'
+end
+{% endhighlight %}
+
+h4. Adding main, test or exclude paths to the .iml file
+
+The extension allows you to add source paths, test source paths or add paths to the excluded set by modifying the "iml.main_source_directories", "iml.test_source_directories" or "iml.excluded_directories" settings respectively. This is only needed when the defaults inherited from project.compile or project.test are not sufficient.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  # Add path for generated resources to .iml file
+  iml.main_source_directories << _("generated/main/resources")
+
+  # Add path for generated test resources to .iml file
+  iml.test_source_directories << _("generated/test/resources")
+
+  # Exclude the temp directory created during testing
+  iml.excluded_directories << _("tmp")
+
+  ...
+end
+{% endhighlight %}
+
+h4. Adding main or test dependencies to the .iml file
+
+The extension allows you to add main or test dependencies by modifying the "iml.main_dependencies" or "iml.test_dependencies" settings respectively. This is only needed when the defaults inherited from project.compile or project.test are not sufficient. Note: These dependencies are not included on compile path when running buildr.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  # Add idea specific jar dependency to .iml file
+  iml.main_dependencies << 'group:id:jar:1.0'
+
+  # Add idea specific test jar dependency to .iml file
+  iml.test_dependencies << 'group:id:jar:1.0'
+  ...
+end
+{% endhighlight %}
+
+h4. Dependency generation
+
+A file dependency that exists in the local maven 2 repository is stored in the IML file relative to the @$MAVEN_REPOSITORY$@ environment variable (that defaults to @~/.m2/repository@). The user can override the environment variable by setting the "iml.local_repository_env_override" setting. If the dependency does not exist in to maven repository or the "iml.local_repository_env_override" setting is set to nil, then the path stored in the IML is relative to the IML file.
+
+h5. Example: Setting local_repository_env_override
+
+{% highlight ruby %}
+define "foo" do
+  iml.local_repository_env_override = nil
+  compile.with 'group:id:jar:1.0'
+end
+{% endhighlight %}
+
+Will generate a dependency with a path like:
+
+<pre>
+jar:///home/peter/.m2/repository/group/id/1.0/id-1.0.jar!/
+</pre>
+
+rather than the default
+
+<pre>
+jar://$MAVEN_REPOSITORY$/group/id/1.0/id-1.0.jar!/
+</pre>
+
+h5. Example: A dependency outside the maven repository
+
+{% highlight ruby %}
+define "foo" do
+  compile.with _("foos-dep.jar")
+end
+{% endhighlight %}
+
+Will generate a dependency with a path like:
+
+<pre>
+jar://$MODULE_DIR$/foo-dep.jar!/
+</pre>
+
+h4. Module Facets
+
+Facets are IDEAs mechanism for adding support for languages, tools and frameworks other than core java. A facet can be added to a project so that it can be deployed as a web application or a hibernate application. A facet can also be used t provide support for other languages such as ruby and scala. The extension makes it possible to generate @.iml@ with the appropriate facets via the "iml.add_facet" method. It should be noted that facets are NOT inherited by sub-projects.
+
+h5. Example
+
+This example adds the web facet to a project.
+
+{% highlight ruby %}
+define "foo" do
+  iml.add_facet("Web","web") do |facet|
+    facet.configuration do |conf|
+      conf.descriptors do |desc|
+        desc.deploymentDescriptor :name => 'web.xml',
+          :url => "file://$MODULE_DIR$/src/main/webapp/WEB-INF/web.xml",
+          :optional => "false", :version => "2.4"
+      end
+      conf.webroots do |webroots|
+        webroots.root :url => "file://$MODULE_DIR$/src/main/webapp", :relative => "/"
+      end
+    end
+  end
+end
+{% endhighlight %}
+
+h4. Project Configurations
+
+Configurations are IDEAs mechanism for running or debugging the project. Shared configurations are stored in the project file. The extension makes it possible to generate an @.ipr@ with specific configurations via the "ipr.add_configuration" method.
+
+h5. Example
+
+This example adds a configuration to invoke a GWT application.
+
+{% highlight ruby %}
+define "foo" do
+  ...
+  ipr.add_configuration("Run Contacts.html", "GWT.ConfigurationType", "GWT Configuration") do |xml|
+    xml.module(:name => project.iml.id)
+    xml.option(:name => "RUN_PAGE", :value => "Contacts.html")
+    xml.option(:name => "compilerParameters", :value => "-draftCompile -localWorkers 2")
+    xml.option(:name => "compilerMaxHeapSize", :value => "512")
+
+    xml.RunnerSettings(:RunnerId => "Run")
+    xml.ConfigurationWrapper(:RunnerId => "Run")
+    xml.method()
+  end
+end
+{% endhighlight %}
+
+h4. Project Artifacts
+
+IDEA can build artifacts such as jars and wars. The artifact configuration is stored in the project file. The extension makes it possible to generate an @.ipr@ with specific artifacts via the "ipr.add_artifact" method.
+
+h5. Example
+
+This example adds a jar artifact to the project.
+
+{% highlight ruby %}
+define "foo" do
+  ...
+  ipr.add_artifact("MyFancy.jar", "jar") do |xml|
+    xml.tag!('output-path', project._(:artifacts, "MyFancy.jar"))
+    xml.element :id => "module-output", :name => "foo"
+  end
+end
+{% endhighlight %}
+
+h4. Custom Component Sections
+
+If the extension does not provide capability to generate configuration for a particular IDEA plugin the user can provide their own configuration data via the "ipr.add_component" or "iml.add_component" methods.
+
+h5. Example: Adding .ipr specific component
+
+This example changes the compiler configuration for project.
+
+{% highlight ruby %}
+define "foo" do
+  ipr.add_component("CompilerConfiguration") do |component|
+    component.option :name => 'DEFAULT_COMPILER', :value => 'Javac'
+    component.option :name => 'DEPLOY_AFTER_MAKE', :value => '0'
+    component.resourceExtensions do |xml|
+      xml.entry :name => '.+\.nonexistent'
+    end
+    component.wildcardResourceExtensions do |xml|
+      xml.entry :name => '?*.nonexistent'
+    end
+  end
+end
+{% endhighlight %}
+
+h5. Example: Adding .iml specific component
+
+This example adds the web facet to a project. Note: This overrides the facets defined by the "iml.add_facet" method.
+
+{% highlight ruby %}
+define "foo" do
+  iml.add_component("FacetManager") do |component|
+    component.facet :type => 'web', :name => 'Web' do |facet|
+      facet.configuration do |conf|
+        conf.descriptors do |desc|
+          desc.deploymentDescriptor :name => 'web.xml',
+            :url => "file://$MODULE_DIR$/src/main/webapp/WEB-INF/web.xml",
+            :optional => "false", :version => "2.4"
+        end
+        conf.webroots do |webroots|
+          webroots.root :url => "file://$MODULE_DIR$/src/main/webapp", :relative => "/"
+        end
+      end
+    end
+  end
+end
+{% endhighlight %}
+
+h4. Templates
+
+The underlying project files are xml the contain elements for a number of "components". The extension will load any existing project files and replace or add any component elements that are generated by the extension. The extension also allows the user to specify a template with either "ipr.template" or "iml.template" settings. If a template is specified it will be loaded and any component elements in these documents will be merged into the base document prior to merging in generated sections. Templates are useful if you want to enforce certain configuration options (i.e. project specific code style).
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  ipr.template = 'project.ipr.template'
+  iml.template = 'module.iml.template'
+end
+{% endhighlight %}
+
+h4. Groups
+
+IDEA provides the facility to organise modules into groups. By default the extension does not do this but it can be enabled by "iml.group" setting. If that setting is set to true then the @.iml@ file will be placed in a group based on the parent projects name. If the setting is a string then that is used as the name of the group.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  iml.group = true
+  define 'bar' do
+    define 'baz'
+  end
+  define 'rab' do
+    iml.group = "MyGroup"
+  end
+end
+{% endhighlight %}
+
+Will place the generated .imls in the following groups:
+
+<pre>
+foo.iml                => ''
+bar/bar.iml            => 'foo'
+bar/baz/baz.iml        => 'foo/bar'
+rab/rab.iml            => 'MyGroup'
+</pre>
+
+h4. Add Extra .iml files to .ipr
+
+The 'ipr.extra_modules' setting makes it possible to add extra modules to the generated iml file. The setting is an array of file names relative to the base project directory.
+
+h5. Example
+
+{% highlight ruby %}
+define "foo" do
+  ipr.extra_modules << 'other.iml'
+  ipr.extra_modules << 'other_other.iml'
+end
+{% endhighlight %}
+
+Will add the 'other.iml' and 'other_other.iml' files to the @.ipr@ project files.
+
+h4. Buildr plugin for IDEA
 
 Also, check out the "Buildr plugin for IDEA":http://www.digitalsanctum.com/buildr-plug-in/ (IDEA 7 and later).  Once installed, open your project with IDEA.  If IDEA finds that you have Buildr installed and finds a buildfile in the project's directory, it will show all the tasks available for that project.  To run a task, double-click it.  When the task completes, IDEA will show the results in the Buildr Output window.
 
-
-h2(#cobertura_emma_jdepend). Cobertura, Emma, JDepend
+h2(#cobertura_emma). Cobertura, Emma
 
 You can use "Cobertura":http://cobertura.sourceforge.net/ or "Emma":http://emma.sourceforge.net/ to instrument your code, run the tests and create a test coverage report in either HTML or XML format.
 
@@ -319,7 +750,7 @@ $ buildr test cobertura:html
 
 As you can guess, the other tasks are @cobertura:xml@, @emma:html@ and @emma:xml@.
 
-If you want to generate a test coverage report only for a specific project, you can do so by using the project name as prefix to the tasks. 
+If you want to generate a test coverage report only for a specific project, you can do so by using the project name as prefix to the tasks.
 
 {% highlight sh %}
 $ buildr subModule:cobertura:html
@@ -328,7 +759,7 @@ $ buildr subModule:cobertura:html
 Each project can specify which classes to include or exclude from cobertura instrumentation by giving a class-name regexp to the @cobertura.include@ or @cobertura.exclude@ methods:
 
 {% highlight ruby %}
-define 'someModule' do 
+define 'someModule' do
   cobertura.include 'some.package.==*=='
   cobertura.include /some.(foo|bar).==*==/
   cobertura.exclude 'some.foo.util.SimpleUtil'
@@ -345,27 +776,18 @@ define 'someModule' do
   cobertura.check.branch_rate = 75
   cobertura.check.line_rate = 100
   cobertura.check.total_line_rate = 98
-  
+
   task(:deploy).enhance 'cobertura:check'
 end
 {% endhighlight %}
 
 The @cobertura:check@ task supports all of the configuration parameters allowed by the @cobertura-check@ Ant task (as "documented here":http://cobertura.sourceforge.net/anttaskreference.html).  Configuration parameters are "Ruby-ized" (as demonstrated in the example above).
 
-You can use "JDepend":http://clarkware.com/software/JDepend.html on to generate design quality metrics.  There are three tasks this time, the eye candy one:
-
-{% highlight sh %}
-$ buildr jdepend:swing
-{% endhighlight %}
-
-The other two tasks are @jdepend:text@ and @jdepend:xml@.
-
 We want Buildr to load fast, and not everyone cares for these tasks, so we don't include them by default.  If you want to use one of them, you need to require it explicitly.  The proper way to do it in Ruby:
 
 {% highlight ruby %}
 require 'buildr/java/cobertura'
 require 'buildr/java/emma'
-require 'buildr/jdepend'
 {% endhighlight %}
 
 You may want to add those to the Buildfile.  Alternatively, you can use these tasks for all your projects without modifying the Buildfile.  One convenient method is to add these lines to the @buildr.rb@ file in the @.buildr@ directory under your home directory.
@@ -373,10 +795,154 @@ You may want to add those to the Buildfile.  Alternatively, you can use these ta
 Another option is to require it from the command line (@--require@ or @-r@), for example:
 
 {% highlight sh %}
-$ buildr --require buildr/jdepend jdepend:swing
 $ buildr -rbuildr/java/cobertura cobertura:html
 {% endhighlight %}
 
+h2(#checkstyle). Checkstyle
+
+Checkstyle is integrated into Buildr through an extension. The extension adds the "checkstyle:xml" task that generates an xml report listing checkstyle violations and may add a "checkstyle:html" task if an appropriate xsl is present. A typical project that uses the extension may look something like;
+
+{% highlight ruby %}
+require 'buildr/checkstyle'
+
+define "foo" do
+  project.version = "1.0.0"
+
+  define "bar" do ... end
+
+  checkstyle.config_directory = _('etc/checkstyle')
+  checkstyle.source_paths << project('bar')._(:source, :main, :java)
+  checkstyle.extra_dependencies << :javax_servlet
+
+end
+{% endhighlight %}
+
+By default checkstyle will look for all configuration files in the src/main/etc/checkstyle directory but this can be overriden by the setting the "checkstyle.config_directory" parameter. The "checkstyle:xml" task will be defined if the checkstyle rules file is found. The rules file is typically named "checks.xml" but can be overridden by setting the "checkstyle.configuration_file" parameter. If a suppressions file or import control file is included in the directory, these will also be used by the extension. These names of these files will default to "suppressions.xml" and "import-control.xml" but these can be overriden by the parameters "checkstyle.suppressions_file" and "checkstyle.import_control_file".
+
+The extension will include the source and test directories of the project aswell as the compile and test dependencies when invoking the checkstyle tool. These can be added to by the parameters "checkstyle.source_paths" and "checkstyle.extra_dependencies" as appropriate.
+
+If the xsl file named "checkstyle-report.xsl" is present in the configuration directory then a "checkstyle:html" task will be defined. The name of the xsl file can be overridden by the parameter "checkstyle.style_file".
+
+h2(#findbugs). FindBugs
+
+FindBugs is integrated into Buildr through an extension. The extension adds the "findbugs:xml" task that generates an xml report listing findbugs violations and may add a "findbugs:html" task if an appropriate xsl is present. A typical project that uses the extension may look something like;
+
+{% highlight ruby %}
+require 'buildr/findbugs'
+
+define "foo" do
+  project.version = "1.0.0"
+
+  define "bar" do ... end
+
+  findbugs.config_directory = _('etc/findbugs')
+  findbugs.source_paths << project('bar')._(:source, :main, :java)
+  findbugs.analyze_paths << project('bar').compile.target
+  findbugs.extra_dependencies << project('bar').compile.dependencies
+
+end
+{% endhighlight %}
+
+By default findbugs will look for all configuration files in the src/main/etc/findbugs directory but this can be overriden by the setting the "findbugs.config_directory" parameter. The "findbugs:xml" task will past FindBugs a filter xml if a file named "filter.xml" is present in the configuration directory. This can be overridden by setting the "findbugs.filter_file" parameter.
+
+The extension will include the source and test directories of the project aswell as the compile and test dependencies when invoking the findbugs tool. These can be added to by the parameters "findbugs.source_paths" and "findbugs.extra_dependencies" as appropriate. The actual analysis is run across compiled artifacts ad this will default to the target directory of the project but this can be overriden by the "findbugs.analyze_paths" parameter.
+
+If the xsl file named "findbugs-report.xsl" is present in the configuration directory then a "findbugs:html" task will be defined. The name of the xsl file can be overridden by the parameter "findbugs.style_file".
+
+h2(#javancss). JavaNCSS
+
+JavaNCSS is integrated into Buildr through an extension. The extension adds the "javancss:xml" task that generates an xml report and may add a "javancss:html" task if an appropriate xsl is present. A typical project that uses the extension may look something like;
+
+{% highlight ruby %}
+require 'buildr/javancss'
+
+define "foo" do
+  project.version = "1.0.0"
+
+  define "bar" do ... end
+
+  javancss.enabled = true
+  javancss.config_directory = _('etc/javancss')
+  javancss.source_paths << project('bar')._(:source, :main, :java)
+
+end
+{% endhighlight %}
+
+The extension will include the source and test directories of the project when invoking the javancss tool. These can be added to by the parameters "javancss.source_paths".
+
+By default javancss will look for all configuration files in the src/main/etc/javancss directory but this can be overriden by the setting the "javancss.config_directory" parameter. The "javancss:xml" task will be defined if the "javancss.enabled" property is set to true. If the xsl file named "javancss2html.xsl" is present in the configuration directory then a "javancss:html" task will be defined. The name of the xsl file can be overridden by the parameter "javancss.style_file".
+
+h2(#jdepend). JDepend
+
+"JDepend":http://clarkware.com/software/JDepend.html is integrated into Buildr through an extension. The extension adds the "jdepend:xml" task that generates an xml report, "jdepend:swing" that shows a Swing UI, and may add a "jdepend:html" task if an appropriate xsl is present. A typical project that uses the extension may look something like;
+
+{% highlight ruby %}
+require 'buildr/jdepend'
+
+define "foo" do
+  project.version = "1.0.0"
+
+  define "bar" do ... end
+
+  jdepend.enabled = true
+  jdepend.config_directory = _('etc/jdepend')
+  jdepend.target_paths << project('bar').compile.target
+
+end
+{% endhighlight %}
+
+The extension will include the compiled source and test directories of the project when invoking the JDepend tool. These can be added to by the parameters "jdepend.target_paths".
+
+By default JDepend will look for all configuration files in the src/main/etc/jdepend directory but this can be overriden by the setting the "jdepend.config_directory" parameter. The "jdepend:xml" and "jdepend:swing" task will be defined if the "jdepend.enabled" property is set to true. If a "jdepend.properties" is included in the configuration directory then jdepend will load it during the analysis. If the xsl file named "jdepend.xsl" is present in the configuration directory then a "jdepend:html" task will be defined. The name of the xsl file can be overridden by the parameter "jdepend.style_file".
+
+h2(#pmd). PMD
+
+PMD is integrated into Buildr through an extension. The extension adds the "pmd:rule:xml" and "pmd:rule:html" tasks. A typical project that uses the extension may look something like;
+
+
+{% highlight ruby %}
+require 'buildr/javancss'
+
+define "foo" do
+  project.version = "1.0.0"
+
+  define "bar" do ... end
+
+  pmd.enabled = true
+  pmd.rule_set_paths = _('etc/pmd') + "/"
+  pmd.source_paths << project('bar')._(:source, :main, :java)
+  pmd.rule_set_files = ['basic','imports','unusedcode','logging-java','finalizers']
+
+end
+{% endhighlight %}
+
+The "pmd:rule:xml" task will be defined if the "pmd.enabled" property is set to true.
+
+The extension will include the source and test directories of the project when invoking the pmd tool. These can be added to by the parameters "pmd.source_paths".
+
+By default the pmd rule files 'basic','imports' and 'unusedcode' will be evaluated but this can be overriden by the "pmd.rule_set_files" parameter. The rule sets will be loaded from the classpath and this can be added to by modifying the "pmd.rule_set_paths" parameter.
+
+h2(#jaxb_xjc). JAXB Xjc Compiler
+
+Buildr includes an extension that provides the ability to invoke jaxb xjc binding compiler. A typical project that uses the extension may look something like;
+
+{% highlight ruby %}
+require 'buildr/jaxb_xjc'
+
+define "foo" do
+  project.version = "1.0.0"
+  compile.from compile_jaxb(_('src/schemas/wildfire-1.3.xsd'),
+                            "-quiet",
+                            :package => "org.foo.api")
+  package :jar
+end
+{% endhighlight %}
+
+The method compile_jaxb accepts either an array of files or a single file as the first parameter. It then accepts 0 or more arguments that are passed to the underlying XJC compiler. The arguments are documented on the "jaxb site":https://jaxb.dev.java.net/nonav/2.2.1/docs/xjc.html. If the last argument is an options hash then the extension handles the options hash specially. The supported options include:
+
+* <tt>:directory</tt>: The directory to which source is generated. Defaults to <tt>_(:target, :generated, :jaxb)</tt>
+* <tt>:keep_content</tt>: By default the generated directory will be deleted. If <tt>true</tt> is specified for this parameter the directory will not be deleted.
+* <tt>:package</tt>: The package in which the source is generated.
 
 h2(#anything_ruby). Anything Ruby Can Do
 

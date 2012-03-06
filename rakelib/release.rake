@@ -38,14 +38,13 @@ task :release do
     target = "people.apache.org:/www/#{spec.name}.apache.org/"
     puts "Uploading new site to #{spec.name}.apache.org ..."
     sh 'rsync', '--progress', '--recursive', '--delete', "_release/#{spec.version}/site/", target
-    sh 'ssh', 'people.apache.org', 'chmod', '-R', 'g+w', "/www/#{spec.name}.apache.org/*"
+    sh 'ssh', 'people.apache.org', 'chmod', '-f', '-R', 'g+w', "/www/#{spec.name}.apache.org/*"
     puts "[X] Uploaded new site to #{spec.name}.apache.org"
   end.call
 
 
   # Upload binary and source packages to RubyForge.
   lambda do
-    sh 'rubyforge', 'login'
     # update rubyforge projects, processors, etc. in local config
     sh 'rubyforge', 'config'
     files = FileList["_release/#{spec.version}/dist/*.{gem,tgz,zip}"]
@@ -62,6 +61,15 @@ task :release do
     puts "[X] Uploaded gems and source files to #{spec.name}.rubyforge.org"
   end.call
 
+  # Push gems to Rubyforge.org / Gemcutter
+  lambda do
+    files = FileList["_release/#{spec.version}/dist/*.{gem}"]
+    files.each do |f|
+      puts "Push gem #{f} to RubyForge.org / Gemcutter ... "
+      `gem push #{f}`
+    end
+    puts "[X] Pushed gems to Rubyforge.org / Gemcutter"
+  end
 
   # Create an SVN tag for this release.
   lambda do

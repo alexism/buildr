@@ -13,13 +13,17 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
+# Let's see if we can use notify-send.  Must be running from console in verbose mode.
+if $stdout.isatty && verbose
+  system("which notify-send > /dev/null 2>/dev/null")
+  if $?.exitstatus == 0
+    def notify_send(type, title, message)
+      icon = File.join(File.dirname(__FILE__), '../resources/', type.to_s + '.png')
+      system "notify-send -i #{icon} \"#{title}\" \"#{message}\""
+    end
 
-require RUBY_PLATFORM == 'java' ? 'buildr/java/jruby' : 'buildr/java/rjb'
-require 'buildr/java/compiler'
-require 'buildr/java/external'
-require 'buildr/java/tests'
-require 'buildr/java/bdd'
-require 'buildr/java/packaging'
-require 'buildr/java/commands'
-require 'buildr/java/doc'
-require 'buildr/java/deprecated'
+    Buildr.application.on_completion { |title, message| notify_send(:completed, title, message) if verbose }
+    Buildr.application.on_failure { |title, message, ex| notify_send(:failed, title, message) if verbose }
+  end
+end
+

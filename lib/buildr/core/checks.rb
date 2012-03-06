@@ -13,11 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/core/project'
-autoload :Spec, 'spec'
-
-
 module Buildr
   # Methods added to Project to allow checking the build.
   module Checks
@@ -90,7 +85,7 @@ module Buildr
         @description = args.pop if String === args.last
         @subject = args.shift
         raise ArgumentError, "Expecting subject followed by description, and either one is optional. Not quite sure what to do with this list of arguments." unless args.empty?
-        @block = block || lambda { info "Pending: #{description}" }
+        @block = block || lambda { |klass| info "Pending: #{description}" }
       end
 
       # :call-seq:
@@ -120,7 +115,7 @@ module Buildr
           end
           define_method(:it) { subject }
           define_method(:description) { description }
-          include Spec::Matchers
+          include ::RSpec::Matchers
           include Matchers
         end
 
@@ -148,8 +143,8 @@ module Buildr
             passed
           rescue Exception=>ex
             if verbose
-              error ex.backtrace.select { |line| line =~ /#{Buildr.application.buildfile}/ }.join("\n")
               error ex
+              error ex.backtrace.select { |line| line =~ /#{Buildr.application.buildfile}/ }.join("\n")
             end
             false
           end

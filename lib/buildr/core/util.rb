@@ -13,17 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'rbconfig'
-require 'pathname'
-autoload :Tempfile, 'tempfile'
-autoload :YAML, 'yaml'
-autoload :REXML, 'rexml/document'
-gem 'xml-simple' ; autoload :XmlSimple, 'xmlsimple'
-gem 'builder' ; autoload :Builder, 'builder' # A different kind of buildr, one we use to create XML.
-require 'highline/import'
-
-
 module Buildr
 
   module Util
@@ -54,7 +43,7 @@ module Buildr
     def ruby(*args)
       options = Hash === args.last ? args.pop : {}
       cmd = []
-      ruby_bin = File.expand_path(Config::CONFIG['ruby_install_name'], Config::CONFIG['bindir'])
+      ruby_bin = normalize_path(Config::CONFIG['ruby_install_name'], Config::CONFIG['bindir'])
       if options.delete(:sudo) && !(win_os? || Process.uid == File.stat(ruby_bin).uid)
         cmd << 'sudo' << '-u' << "##{File.stat(ruby_bin).uid}"
       end
@@ -115,45 +104,21 @@ module Buildr
       FileList[dirs.map { |dir| File.join(dir, '/**/{*,.*}') }].reject { |file| File.basename(file) =~ /^[.]{1,2}$/ }
     end
 
-    # Utility methods for running gem commands
-    module Gems #:nodoc:
-      extend self
-
-      # Install gems specified by each Gem::Dependency if they are missing. This method prompts the user
-      # for permission before installing anything.
-      #
-      # Returns the installed Gem::Dependency objects or fails if permission not granted or when buildr
-      # is not running interactively (on a tty)
-      def install(*dependencies)
-        raise ArgumentError, "Expected at least one argument" if dependencies.empty?
-        remote = dependencies.map { |dep| Gem::SourceInfoCache.search(dep).last || dep }
-        not_found_deps, to_install = remote.partition { |gem| gem.is_a?(Gem::Dependency) }
-        fail Gem::LoadError, "Build requires the gems #{not_found_deps.join(', ')}, which cannot be found in local or remote repository." unless not_found_deps.empty?
-        uses = "This build requires the gems #{to_install.map(&:full_name).join(', ')}:"
-        fail Gem::LoadError, "#{uses} to install, run Buildr interactively." unless $stdout.isatty
-        unless agree("#{uses} do you want me to install them? [Y/n]", true)
-          fail Gem::LoadError, 'Cannot build without these gems.'
-        end
-        to_install.each do |spec|
-          say "Installing #{spec.full_name} ... " if verbose
-          command 'install', spec.name, '-v', spec.version.to_s, :verbose => false
-          Gem.source_index.load_gems_in Gem::SourceIndex.installed_spec_directories
-        end
-        to_install
+    # :call-seq:
+    #   replace_extension(filename) => filename_with_updated_extension
+    #
+    # Replace the file extension, e.g.,
+    #   replace_extension("foo.zip", "txt") => "foo.txt"
+    def replace_extension(filename, new_ext)
+      ext = File.extname(filename)
+      if filename =~ /\.$/
+        filename + new_ext
+      elsif ext == ""
+        filename + "." + new_ext
+      else
+        filename[0..-ext.length] + new_ext
       end
-
-      # Execute a GemRunner command
-      def command(cmd, *args)
-        options = Hash === args.last ? args.pop : {}
-        gem_home = ENV['GEM_HOME'] || Gem.path.find { |f| File.writable?(f) }
-        options[:sudo] = :root unless Util.win_os? || gem_home
-        options[:command] = 'gem'
-        args << options
-        args.unshift '-i', gem_home if cmd == 'install' && gem_home && !args.any?{ |a| a[/-i|--install-dir/] }
-        Util.ruby cmd, *args
-      end
-
-    end # Gems
+    end
 
   end # Util
 end
@@ -314,6 +279,12 @@ end
 if Buildr::Util.java_platform?
   require 'ffi'
 
+  # Workaround for BUILDR-535: when requiring 'ffi', JRuby defines an :error
+  # method with arity 0.
+  class Module
+    remove_method :error if method_defined?(:error)
+  end
+
   # Fix for BUILDR-292.
   # JRuby fails to rename a file on different devices
   # this monkey-patch wont be needed when JRUBY-3381 gets resolved.
@@ -450,8 +421,8 @@ if Buildr::Util.java_platform?
           arg_str = args.map { |a| "'#{a}'" }
           __native_system__(cd + cmd.first + ' ' + arg_str.join(' '))
         end
-        $? = Buildr::ProcessStatus.new(0, res == 0, res)    # KLUDGE
-        block.call(res == 0, $?)
+        status = Buildr::ProcessStatus.new(0, res == 0, res)    # KLUDGE
+        block.call(res == 0, status)
       end
     end
 

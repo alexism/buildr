@@ -13,10 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/packaging'
-
-
 module Buildr
   module Packaging #:nodoc:
 
@@ -56,9 +52,14 @@ module Buildr
           #
           # Parse the MANIFEST.MF entry of a ZIP (or JAR) file and return a new Manifest.
           def from_zip(file)
-            Zip::ZipFile.open(file.to_s) do |zip|
-              Manifest.parse zip.read('META-INF/MANIFEST.MF') rescue Manifest.new
+            Zip::ZipInputStream::open(file.to_s) do |zip|
+              while (entry = zip.get_next_entry)
+                if entry.name == 'META-INF/MANIFEST.MF'
+                  return Manifest.parse zip.read
+                end
+              end
             end
+            Manifest.new
           end
 
           # :call-seq:
@@ -256,8 +257,9 @@ module Buildr
           super
           @classes = []
           @libs = []
-          prepare do
-            @classes.to_a.flatten.each { |classes| path('WEB-INF/classes').include classes, :as=>'.' }
+          enhance do |war|
+            @libs.each {|lib| lib.invoke if lib.respond_to?(:invoke) }
+            @classes.to_a.flatten.each { |classes| include classes, :as => 'WEB-INF/classes' }
             path('WEB-INF/lib').include Buildr.artifacts(@libs) unless @libs.nil? || @libs.empty?
           end
         end
@@ -385,13 +387,17 @@ module Buildr
 
         # The display-name entry for application.xml
         attr_accessor :display_name
+        # The description entry for application.xml
+        attr_accessor :description
         # Map from component type to path inside the EAR.
         attr_accessor :dirs
+        # Security roles entry for application.xml
+        attr_accessor :security_roles
 
         def initialize(*args)
           super
           @dirs = Hash.new { |h, k| k.to_s }
-          @libs, @components = [], []
+          @libs, @components, @security_roles = [], [], []
           prepare do
             @components.each do |component|
               path(component[:path]).include(component[:clone] || component[:artifact])
@@ -523,6 +529,8 @@ module Buildr
           "http://java.sun.com/j2ee/dtds/application_1_2.dtd"
           xml.application do
             xml.tag! 'display-name', display_name
+            desc = self.description || @project.comment
+            xml.tag! 'description', desc if desc
             @components.each do |comp|
               basename = comp[:artifact].to_s.pathmap('%f')
               uri = comp[:path].empty? ? basename : File.join(comp[:path], basename)
@@ -540,6 +548,12 @@ module Buildr
                 end
               when :jar
                 xml.jar uri
+              end
+            end
+            @security_roles.each do |role|
+              xml.tag! 'security-role', :id=>role[:id] do
+                xml.description role[:description]
+                xml.tag! 'role-name', role[:name]
               end
             end
           end
@@ -607,7 +621,7 @@ module Buildr
       # Call this when you want the project (and all its sub-projects) to create a source distribution.
       # You can use the source distribution in an IDE when debugging.
       #
-      # A source distribution is a ZIP package with the classifier 'sources', which includes all the
+      # A source distribution is a jar package with the classifier 'sources', which includes all the
       # sources used by the compile task.
       #
       # Packages use the project's manifest and meta_inf properties, which you can override by passing
@@ -624,7 +638,7 @@ module Buildr
           selected = options[:only] ? projects(options[:only]) :
             options[:except] ? ([self] + projects - projects(options[:except])) :
             [self] + projects
-          selected.reject { |project| project.compile.sources.empty? }.
+          selected.reject { |project| project.compile.sources.empty? && project.resources.target.nil? }.
             each { |project| project.package(:sources) }
         end
       end
@@ -696,13 +710,12 @@ module Buildr
       end
 
       def package_as_javadoc_spec(spec) #:nodoc:
-        spec.merge(:type=>:zip, :classifier=>'javadoc')
+        spec.merge(:type=>:jar, :classifier=>'javadoc')
       end
 
       def package_as_javadoc(file_name) #:nodoc:
         ZipTask.define_task(file_name).tap do |zip|
           zip.include :from=>doc.target
-          doc.options[:windowtitle] ||= project.comment || project.name
         end
       end
 

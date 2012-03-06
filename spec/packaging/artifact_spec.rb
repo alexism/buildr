@@ -13,17 +13,20 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require File.join(File.dirname(__FILE__), '../spec_helpers')
-
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
+require 'fileutils'
 
 describe Artifact do
   before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
     @spec = { :group=>'com.example', :id=>'library', :type=>:jar, :version=>'2.0' }
     @artifact = artifact(@spec)
     @classified = artifact(@spec.merge(:classifier=>'all'))
     @snapshot = artifact(@spec.merge({ :version=>'2.1-SNAPSHOT' }))
   end
+
 
   it 'should act as one' do
     @artifact.should respond_to(:to_spec)
@@ -79,6 +82,10 @@ describe Artifact do
     @artifact.sources_artifact.to_hash.should == @artifact.to_hash.merge(:classifier=>'sources')
   end
 
+  it 'should have associated javadoc artifact' do
+    @artifact.javadoc_artifact.to_hash.should == @artifact.to_hash.merge(:classifier=>'javadoc')
+  end
+
   it 'should download file if file does not exist' do
     lambda { @artifact.invoke }.should raise_error(Exception, /No remote repositories/)
     lambda { @classified.invoke }.should raise_error(Exception, /No remote repositories/)
@@ -129,10 +136,24 @@ describe Artifact do
     Artifact.list.should include(@classified.to_spec)
     Artifact.list.should include('foo:foo:jar:1.0')
   end
+
+  it 'should accept user-defined string content' do
+    a = artifact(@spec)
+    a.content 'foo'
+    install a
+    lambda { install.invoke }.should change { File.exist?(a.to_s) && File.exist?(repositories.locate(a)) }.to(true)
+    read(repositories.locate(a)).should eql('foo')
+  end
 end
 
 
 describe Repositories, 'local' do
+  before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
+  end
+
   it 'should default to .m2 path' do
     # For convenience, sandbox actually sets the local repository to a temp directory
     repositories.local = nil
@@ -191,6 +212,10 @@ end
 
 describe Repositories, 'remote' do
   before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
+
     @repos = [ 'http://www.ibiblio.org/maven2', 'http://repo1.maven.org/maven2' ]
   end
 
@@ -240,7 +265,7 @@ describe Repositories, 'remote' do
 
   it 'should support artifact classifier' do
     repositories.remote = 'http://example.com'
-    URI.should_receive(:download).twice.and_return { |uri, target, options| write target }
+    URI.should_receive(:download).once.and_return { |uri, target, options| write target }
     lambda { artifact('com.example:library:jar:all:2.0').invoke }.
       should change { File.exist?(File.join(repositories.local, 'com/example/library/2.0/library-2.0-all.jar')) }.to(true)
   end
@@ -282,10 +307,88 @@ describe Repositories, 'remote' do
       and_return { fail URI::NotFoundError }
     URI.should_receive(:download).twice.with(uri(/2.1-SNAPSHOT\/maven-metadata.xml$/), duck_type(:write)).
       and_return { |uri, target, options| target.write(metadata) }
-    URI.should_receive(:download).twice.with(uri(/2.1-SNAPSHOT\/library-2.1-20071012.190008-8.(jar|pom)$/), /2.1-SNAPSHOT\/library-2.1-SNAPSHOT.(jar|pom)$/).
+    URI.should_receive(:download).twice.with(uri(/2.1-SNAPSHOT\/library-2.1-20071012.190008-8.(jar|pom)$/), /2.1-SNAPSHOT\/library-2.1-SNAPSHOT.(jar|pom).(\d){1,}$/).
       and_return { |uri, target, options| write target }
     lambda { artifact('com.example:library:jar:2.1-SNAPSHOT').invoke }.
       should change { File.exist?(File.join(repositories.local, 'com/example/library/2.1-SNAPSHOT/library-2.1-SNAPSHOT.jar')) }.to(true)
+  end
+
+  it 'should resolve m2-style deployed snapshots with classifiers' do
+    metadata = <<-XML
+    <?xml version='1.0' encoding='UTF-8'?>
+    <metadata>
+      <groupId>com.example</groupId>
+      <artifactId>library</artifactId>
+      <version>2.1-SNAPSHOT</version>
+      <versioning>
+        <snapshot>
+          <timestamp>20071012.190008</timestamp>
+          <buildNumber>8</buildNumber>
+        </snapshot>
+        <lastUpdated>20071012190008</lastUpdated>
+      </versioning>
+    </metadata>
+    XML
+    repositories.remote = 'http://example.com'
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/library-2.1-20071012.190008-8-classifier.jar$/), anything()).
+      and_return { |uri, target, options| write target }
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/maven-metadata.xml$/), duck_type(:write)).
+      and_return { |uri, target, options| target.write(metadata) }
+    puts repositories.local
+    lambda { artifact('com.example:library:jar:classifier:2.1-SNAPSHOT').invoke}.
+      should change {File.exists?(File.join(repositories.local, 'com/example/library/2.1-SNAPSHOT/library-2.1-SNAPSHOT-classifier.jar')) }.to(true)
+  end
+
+  it 'should fail resolving m2-style deployed snapshots if a timestamp is missing' do
+    metadata = <<-XML
+    <?xml version='1.0' encoding='UTF-8'?>
+    <metadata>
+      <groupId>com.example</groupId>
+      <artifactId>library</artifactId>
+      <version>2.1-SNAPSHOT</version>
+      <versioning>
+        <snapshot>
+          <buildNumber>8</buildNumber>
+        </snapshot>
+        <lastUpdated>20071012190008</lastUpdated>
+      </versioning>
+    </metadata>
+    XML
+    repositories.remote = 'http://example.com'
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/library-2.1-SNAPSHOT.(jar|pom)$/), anything()).
+      and_return { fail URI::NotFoundError }
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/maven-metadata.xml$/), duck_type(:write)).
+      and_return { |uri, target, options| target.write(metadata) }
+    lambda {
+      lambda { artifact('com.example:library:jar:2.1-SNAPSHOT').invoke }.should raise_error(RuntimeError, /Failed to download/)
+    }.should show_error "No timestamp provided for the snapshot com.example:library:jar:2.1-SNAPSHOT"
+    File.exist?(File.join(repositories.local, 'com/example/library/2.1-SNAPSHOT/library-2.1-SNAPSHOT.jar')).should be_false
+  end
+
+  it 'should fail resolving m2-style deployed snapshots if a build number is missing' do
+    metadata = <<-XML
+    <?xml version='1.0' encoding='UTF-8'?>
+    <metadata>
+      <groupId>com.example</groupId>
+      <artifactId>library</artifactId>
+      <version>2.1-SNAPSHOT</version>
+      <versioning>
+        <snapshot>
+          <timestamp>20071012.190008</timestamp>
+        </snapshot>
+        <lastUpdated>20071012190008</lastUpdated>
+      </versioning>
+    </metadata>
+    XML
+    repositories.remote = 'http://example.com'
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/library-2.1-SNAPSHOT.(jar|pom)$/), anything()).
+      and_return { fail URI::NotFoundError }
+    URI.should_receive(:download).once.with(uri(/2.1-SNAPSHOT\/maven-metadata.xml$/), duck_type(:write)).
+      and_return { |uri, target, options| target.write(metadata) }
+    lambda {
+      lambda { artifact('com.example:library:jar:2.1-SNAPSHOT').invoke }.should raise_error(RuntimeError, /Failed to download/)
+    }.should show_error "No build number provided for the snapshot com.example:library:jar:2.1-SNAPSHOT"
+    File.exist?(File.join(repositories.local, 'com/example/library/2.1-SNAPSHOT/library-2.1-SNAPSHOT.jar')).should be_false
   end
 
   it 'should handle missing maven metadata by reporting the artifact unavailable' do
@@ -387,6 +490,14 @@ describe Repositories, 'release_to' do
     repositories.release_to.should == { :url=>'http://john:secret@example.com' }
   end
 
+  it 'should load URL from build settings file' do
+    write 'build.yaml', <<-YAML
+    repositories:
+      release_to: http://john:secret@example.com
+    YAML
+    repositories.release_to.should == { :url=>'http://john:secret@example.com' }
+  end
+
   it 'should load URL, username and password from settings file' do
     write 'home/.buildr/settings.yaml', <<-YAML
     repositories:
@@ -401,7 +512,11 @@ end
 
 
 describe Buildr, '#artifact' do
-  before { @spec = { :group=>'com.example', :id=>'library', :type=>'jar', :version=>'2.0' } }
+  before do
+    @spec = { :group=>'com.example', :id=>'library', :type=>'jar', :version=>'2.0' }
+    @snapshot_spec = 'group:id:jar:1.0-SNAPSHOT'
+    write @file = 'testartifact.jar'
+  end
 
   it 'should accept hash specification' do
     artifact(:group=>'com.example', :id=>'library', :type=>'jar', :version=>'2.0').should respond_to(:invoke)
@@ -488,6 +603,58 @@ describe Buildr, '#artifact' do
     Buildr.application.send(:load_artifact_ns)
     artifact(:j2ee).to_s.pathmap('%f').should == 'geronimo-spec-j2ee-1.4-rc4.jar'
   end
+
+  it 'should try to download snapshot artifact' do
+    run_with_repo
+    snapshot = artifact(@snapshot_spec)
+
+    URI.should_receive(:download).at_least(:twice).and_return { |uri, target, options| write target }
+    FileUtils.should_receive(:mv).at_least(:twice)
+    snapshot.invoke
+  end
+
+  it 'should not try to update snapshot in offline mode if it exists' do
+    run_with_repo
+    snapshot = artifact(@snapshot_spec)
+    write snapshot.to_s
+    Buildr.application.options.work_offline = true
+    URI.should_receive(:download).exactly(0).times
+    snapshot.invoke
+  end
+
+  it 'should download snapshot even in offline mode if it doesn''t exist' do
+    run_with_repo
+    snapshot = artifact(@snapshot_spec)
+    Buildr.application.options.work_offline = true
+    URI.should_receive(:download).exactly(2).times
+    snapshot.invoke
+  end
+
+  it 'should update snapshots if --update-snapshots' do
+    run_with_repo
+    snapshot = artifact(@snapshot_spec)
+    write snapshot.to_s
+    Buildr.application.options.update_snapshots = true
+
+    URI.should_receive(:download).at_least(:twice).and_return { |uri, target, options| write target }
+    FileUtils.should_receive(:mv).at_least(:twice)
+    snapshot.invoke
+  end
+
+  it 'should update snapshot if it''s older than 24 hours' do
+    run_with_repo
+    snapshot = artifact(@snapshot_spec)
+    write snapshot.to_s
+    time = Time.at((Time.now - (60 * 60 * 24) - 10 ).to_i)
+    File.utime(time, time, snapshot.to_s)
+    URI.should_receive(:download).at_least(:once).and_return { |uri, target, options| write target }
+    snapshot.invoke
+  end
+
+  def run_with_repo
+    repositories.remote = 'http://example.com'
+  end
+
 end
 
 
@@ -521,6 +688,14 @@ describe Buildr, '#artifacts' do
 
   it 'should accept filenames and return filenames' do
     artifacts('c:test').first.should be_kind_of(String)
+  end
+
+  it 'should accept any object responding to :to_spec' do
+    obj = Object.new
+    class << obj
+      def to_spec; "org.example:artifact:jar:1.1"; end
+    end
+    artifacts(obj).size.should be(1)
   end
 
   it 'should accept project and return all its packaging tasks' do
@@ -578,6 +753,7 @@ describe Buildr, '#install' do
   before do
     @spec = 'group:id:jar:1.0'
     write @file = 'test.jar'
+    @snapshot_spec = 'group:id:jar:1.0-SNAPSHOT'
   end
 
   it 'should return the install task' do
@@ -600,13 +776,53 @@ describe Buildr, '#install' do
     write artifact(@spec).to_s # install a version of the artifact
     old_mtime = File.mtime(artifact(@spec).to_s)
     sleep 1; write @file       # make sure the "from" file has newer modification time
-    lambda { install.invoke }.should change { File.exist?(artifact(@spec).to_s) and old_mtime < File.mtime(artifact(@spec).to_s) }.to(true)
+    lambda { install.invoke }.should change { modified?(old_mtime, @spec) }.to(true)
   end
 
-  it 'should install POM alongside artifact' do
+  it 'should re-install snapshot artifact when "from" is newer' do
+    install artifact(@snapshot_spec).from(@file)
+    write artifact(@snapshot_spec).to_s # install a version of the artifact
+    old_mtime = File.mtime(artifact(@snapshot_spec).to_s)
+    sleep 1; write @file       # make sure the "from" file has newer modification time
+    lambda { install.invoke }.should change { modified?(old_mtime, @snapshot_spec) }.to(true)
+  end
+
+  it 'should download snapshot to temporary location' do
+    repositories.remote = 'http://example.com'
+    snapshot = artifact(@snapshot_spec)
+    same_time = Time.new
+    download_file = "#{Dir.tmpdir}/#{File.basename(snapshot.name)}#{same_time.to_i}"
+
+    Time.should_receive(:new).twice.and_return(same_time)
+    URI.should_receive(:download).at_least(:twice).and_return { |uri, target, options| write target }
+    FileUtils.should_receive(:mv).at_least(:twice)
+    snapshot.invoke
+  end
+
+  it 'should install POM alongside artifact (if artifact has no classifier)' do
+    pom = artifact(@spec).pom
     write @file
     install artifact(@spec).from(@file)
-    lambda { install.invoke }.should change { File.exist?(artifact(@spec).pom.to_s) }.to(true)
+    lambda { install.invoke }.should change { File.exist?(repositories.locate(pom)) }.to(true)
+  end
+
+  it 'should not install POM alongside artifact if artifact has classifier' do
+    @spec = 'group:id:jar:all:1.0'
+    pom = artifact(@spec).pom
+    write @file
+    p method(:install)
+    install artifact(@spec).from(@file)
+    lambda { install.invoke }.should_not change { File.exist?(repositories.locate(pom)) }.to(true)
+  end
+
+  it 'should reinstall POM alongside artifact' do
+    pom = artifact(@spec).pom
+    write @file
+    write repositories.locate(pom)
+    sleep 1
+
+    install artifact(@spec).from(@file)
+    lambda { install.invoke }.should change { File.mtime(repositories.locate(pom)) }
   end
 end
 
@@ -652,14 +868,11 @@ describe ActsAsArtifact, '#upload' do
     verbose(false) { artifact.upload(:url=>'sftp://example.com/base') }
   end
 
-  it 'should support artifact classifier' do
+  it 'should support artifact classifier and should not upload pom if artifact has classifier' do
     artifact = artifact('com.example:library:jar:all:2.0')
     # Prevent artifact from downloading anything.
     write repositories.locate(artifact)
-    write repositories.locate(artifact.pom)
-    URI.should_receive(:upload).at_least(:once).
-      with(URI.parse('sftp://example.com/base/com/example/library/2.0/library-2.0.pom'), artifact.pom.to_s, anything)
-    URI.should_receive(:upload).at_least(:once).
+    URI.should_receive(:upload).exactly(:once).
       with(URI.parse('sftp://example.com/base/com/example/library/2.0/library-2.0-all.jar'), artifact.to_s, anything)
     verbose(false) { artifact.upload(:url=>'sftp://example.com/base') }
   end
@@ -682,10 +895,17 @@ describe ActsAsArtifact, '#upload' do
     artifact.upload
     lambda { artifact.upload }.should_not raise_error
   end
+
 end
 
 
 describe Rake::Task, ' artifacts' do
+  before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
+  end
+
   it 'should download all specified artifacts' do
     artifact 'group:id:jar:1.0'
     repositories.remote = 'http://example.com'
@@ -710,6 +930,9 @@ end
 describe Rake::Task, ' artifacts:sources' do
 
   before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
     task('artifacts:sources').clear
     repositories.remote = 'http://example.com'
   end
@@ -743,6 +966,44 @@ describe Rake::Task, ' artifacts:sources' do
   end
 end
 
+describe Rake::Task, ' artifacts:javadoc' do
+
+  before do
+    Buildr.repositories.instance_eval do
+      @local = @remote = @release_to = nil
+    end
+    task('artifacts:javadoc').clear
+    repositories.remote = 'http://example.com'
+  end
+
+  it 'should download javadoc for all specified artifacts' do
+    artifact 'group:id:jar:1.0'
+    URI.should_receive(:download).any_number_of_times.and_return { |uri, target| write target }
+    lambda { task('artifacts:javadoc').invoke }.should change { File.exist?('home/.m2/repository/group/id/1.0/id-1.0-javadoc.jar') }.to(true)
+  end
+
+  it "should not try to download javadoc for the project's artifacts" do
+    define('foo', :version=>'1.0') { package(:jar) }
+    URI.should_not_receive(:download)
+    task('artifacts:javadoc').invoke
+  end
+
+  describe 'when the javadoc artifact does not exist' do
+
+    before do
+      artifact 'group:id:jar:1.0'
+      URI.should_receive(:download).any_number_of_times.and_raise(URI::NotFoundError)
+    end
+
+    it 'should not fail' do
+      lambda { task('artifacts:javadoc').invoke }.should_not raise_error
+    end
+
+    it 'should inform the user' do
+      lambda { task('artifacts:javadoc').invoke }.should show_info('Failed to download group:id:jar:javadoc:1.0. Skipping it.')
+    end
+  end
+end
 
 describe Buildr, '#transitive' do
   before do
@@ -778,6 +1039,13 @@ describe Buildr, '#transitive' do
       <groupId>saxon</groupId>
       <version>8.4</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <artifactId>jlib-optional</artifactId>
+      <groupId>jlib</groupId>
+      <version>1.4</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
     </dependency>
   </dependencies>
 </project>
@@ -857,4 +1125,18 @@ XML
   it 'should bring artifact and transitive depenencies' do
     transitive(@transitive).should eql(artifacts(@transitive, @complex, @simple - [@provided]))
   end
+
+  it 'should filter dependencies based on :scopes argument' do
+    specs = [@complex, 'saxon:saxon-dom:jar:8.4']
+    transitive(@complex, :scopes => [:runtime]).should eql(specs.map { |spec| artifact(spec) })
+  end
+
+  it 'should filter dependencies based on :optional argument' do
+    specs = [@complex, 'saxon:saxon-dom:jar:8.4', 'jlib:jlib-optional:jar:1.4']
+    transitive(@complex, :scopes => [:runtime], :optional => true).should eql(specs.map { |spec| artifact(spec) })
+  end
+end
+
+def modified?(old_mtime, spec)
+  File.exist?(artifact(spec).to_s) && old_mtime < File.mtime(artifact(spec).to_s)
 end

@@ -13,16 +13,27 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-require 'buildr/core/doc'
-require 'buildr/scala/compiler'   # ensure Scala dependencies are ready
-
 module Buildr
   module Doc
+
+    module ScaladocDefaults
+      include Extension
+
+      # Default scaladoc -doc-title to project's comment or name
+      after_define(:scaladoc => :doc) do |project|
+        if project.doc.engine? Scaladoc
+          options = project.doc.options
+          key = Scala.version?(2.7) ? :windowtitle : "doc-title".to_sym
+          options[key] = (project.comment || project.name) unless options[key]
+        end
+      end
+    end
+
     class Scaladoc < Base
       specify :language => :scala, :source_ext => 'scala'
 
       def generate(sources, target, options = {})
-        cmd_args = [ '-d', target, Buildr.application.options.trace ? '-verbose' : '' ]
+        cmd_args = [ '-d', target, trace?(:scaladoc) ? '-verbose' : '' ]
         options.reject { |key, value| [:sourcepath, :classpath].include?(key) }.
           each { |key, value| value.invoke if value.respond_to?(:invoke) }.
           each do |key, value|
@@ -47,14 +58,22 @@ module Buildr
           info "Generating Scaladoc for #{project.name}"
           trace (['scaladoc'] + cmd_args).join(' ')
           Java.load
-          Java.scala.tools.nsc.ScalaDoc.main(cmd_args.to_java(Java.java.lang.String)) == 0 or
-            fail 'Failed to generate Scaladocs, see errors above'
+          begin
+            if Scala.version?(2.7, 2.8)
+              Java.scala.tools.nsc.ScalaDoc.process(cmd_args.to_java(Java.java.lang.String))
+            else
+              scaladoc = Java.scala.tools.nsc.ScalaDoc.new
+              scaladoc.process(cmd_args.to_java(Java.java.lang.String))
+            end
+          rescue => e
+            fail 'Failed to generate Scaladocs, see errors above: ' + e
+          end
         end
       end
     end
 
     class VScaladoc < Base
-      VERSION = '1.2-SNAPSHOT'
+      VERSION = '1.2-m1'
       Buildr.repositories.remote << 'http://scala-tools.org/repo-snapshots'
 
       class << self
@@ -68,7 +87,7 @@ module Buildr
       specify :language => :scala, :source_ext => 'scala'
 
       def generate(sources, target, options = {})
-        cmd_args = [ '-d', target, (Buildr.application.options.trace ? '-verbose' : ''),
+        cmd_args = [ '-d', target, (trace?(:vscaladoc) ? '-verbose' : ''),
           '-sourcepath', project.compile.sources.join(File::PATH_SEPARATOR) ]
         options.reject { |key, value| [:sourcepath, :classpath].include?(key) }.
           each { |key, value| value.invoke if value.respond_to?(:invoke) }.
@@ -99,6 +118,25 @@ module Buildr
         end
       end
     end
+  end
+
+  module Packaging
+    module Scala
+      def package_as_scaladoc_spec(spec) #:nodoc:
+        spec.merge(:type=>:jar, :classifier=>'scaladoc')
+      end
+
+      def package_as_scaladoc(file_name) #:nodoc:
+        ZipTask.define_task(file_name).tap do |zip|
+          zip.include :from=>doc.target
+        end
+      end
+    end
+  end
+
+  class Project
+    include ScaladocDefaults
+    include Packaging::Scala
   end
 end
 

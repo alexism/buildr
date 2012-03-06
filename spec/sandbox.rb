@@ -21,20 +21,57 @@ Buildr.application.instance_eval { @rakefile = File.expand_path('buildfile') }
 repositories.remote << 'http://repo1.maven.org/maven2'
 repositories.remote << 'http://scala-tools.org/repo-releases'
 
-# Force Scala 2.7.7 for specs; don't want to rely on SCALA_HOME
-Buildr.settings.build['scala.version'] = "2.7.7"
+# Force Scala version for specs; don't want to rely on SCALA_HOME
+module Buildr::Scala
+  SCALA_VERSION_FOR_SPECS = ENV["SCALA_VERSION"] || "2.8.1"
+end
+Buildr.settings.build['scala.version'] = Buildr::Scala::SCALA_VERSION_FOR_SPECS
 
 # Add a 'require' here only for optional extensions, not for extensions that should be loaded by default.
+require 'buildr/clojure'
 require 'buildr/groovy'
 require 'buildr/scala'
+require 'buildr/bnd'
+require 'buildr/jaxb_xjc'
 
 Java.load # Anything added to the classpath.
-artifacts(TestFramework.frameworks.map(&:dependencies).flatten, JUnit.ant_taskdef, Buildr::Groovy::Groovyc.dependencies).each do |path|
+artifacts(
+  TestFramework.frameworks.map(&:dependencies).flatten,
+  JUnit.ant_taskdef,
+  Buildr::Groovy.dependencies,
+  Buildr::JaxbXjc.dependencies,
+  Buildr::Bnd.dependencies,
+  Buildr::Scala::Scalac.dependencies,
+  Buildr::Shell::BeanShell.artifact,
+  Buildr::Clojure.dependencies
+).each do |path|
   file(path).invoke
 end
 
 ENV['HOME'] = File.expand_path(File.join(File.dirname(__FILE__), '..', 'tmp', 'home'))
 mkpath ENV['HOME']
+
+# Make Scala.version resilient to sandbox reset
+module Buildr::Scala
+
+  remove_const(:DEFAULT_VERSION)
+
+  DEFAULT_VERSION = SCALA_VERSION_FOR_SPECS
+
+  class << self
+    def version
+      SCALA_VERSION_FOR_SPECS
+    end
+  end
+
+  class Scalac
+    class << self
+      def use_installed?
+        false
+      end
+    end
+  end
+end
 
 # We need to run all tests inside a _sandbox, tacking a snapshot of Buildr before the test,
 # and restoring everything to its previous state after the test. Damn state changes.
@@ -89,6 +126,13 @@ module Sandbox
     Buildr.application.instance_eval { @rakefile = File.expand_path('buildfile') }
 
     @_sandbox[:load_path] = $LOAD_PATH.clone
+
+    # clear RUBYOPT since bundler hooks into it
+    #   e.g. RUBYOPT=-I/usr/lib/ruby/gems/1.8/gems/bundler-1.0.15/lib -rbundler/setup
+    # and so Buildr's own Gemfile configuration taints e.g., JRuby's environment
+    @_sandbox[:ruby_opt] = ENV["RUBYOPT"]
+    ENV["RUBYOPT"] = nil
+
     #@_sandbox[:loaded_features] = $LOADED_FEATURES.clone
 
     # Later on we'll want to lose all the on_define created during the test.
@@ -101,16 +145,18 @@ module Sandbox
     # of some essential artifacts (e.g. JUnit artifacts required by build task), so we create
     # these first (see above) and keep them across test cases.
     @_sandbox[:artifacts] = Artifact.class_eval { @artifacts }.clone
-    Buildr.repositories.local = File.expand_path('repository')
+    @_sandbox[:local_repository] = Buildr.repositories.local
     ENV['HOME'] = File.expand_path('home')
     ENV['BUILDR_ENV'] = 'development'
 
     @_sandbox[:env_keys] = ENV.keys
     ['DEBUG', 'TEST', 'HTTP_PROXY', 'HTTPS_PROXY', 'USER'].each { |k| ENV.delete(k) ; ENV.delete(k.downcase) }
 
-    # Remove testing local repository, and reset all repository settings.
+    # By default, remote repository is user's own local M2 repository
+    # since we don't want to remotely download artifacts into the sandbox over and over
     Buildr.repositories.instance_eval do
-      @local = @remote = @release_to = nil
+      @remote = ["file://" + @local]
+      @local = @release_to = nil
     end
     Buildr.options.proxy.http = nil
 
@@ -137,11 +183,15 @@ module Sandbox
     Layout.default = @_sandbox[:layout].clone
 
     $LOAD_PATH.replace @_sandbox[:load_path]
+    ENV["RUBYOPT"] = @_sandbox[:ruby_opt]
+
     FileUtils.rm_rf @temp
     mkpath ENV['HOME']
 
     # Get rid of all artifacts.
     @_sandbox[:artifacts].tap { |artifacts| Artifact.class_eval { @artifacts = artifacts } }
+
+    Buildr.repositories.local = @_sandbox[:local_repository]
 
     # Restore options.
     Buildr.options.test = nil

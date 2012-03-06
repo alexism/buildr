@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 module TestCoverageHelper
@@ -53,7 +53,7 @@ module TestCoverageHelper
   end
 end
 
-describe 'test coverage tool', :shared=>true do
+shared_examples_for 'test coverage tool' do
   include TestCoverageHelper
 
   def toolname

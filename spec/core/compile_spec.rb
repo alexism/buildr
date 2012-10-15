@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 module CompilerHelper
@@ -106,9 +106,9 @@ describe Buildr::CompileTask do
     write "src/main/java/com/example/Hello.java", ""
     old_compiler = nil
     new_compiler = nil
-    define('foo') { 
+    define('foo') {
       old_compiler = compile.compiler
-      compile.using(:scalac) 
+      compile.using(:scalac)
       new_compiler = compile.compiler
     }
     old_compiler.should == :javac
@@ -413,10 +413,21 @@ describe Buildr::CompileTask, '#invoke' do
       lambda { compile.from('sources').invoke }.should raise_error(RuntimeError, /no compiler selected/i)
     end
   end
+
+  it 'should not unnecessarily recompile files explicitly added to compile list (BUILDR-611)' do
+    mkpath 'src/other'
+    write 'src/other/Foo.java', 'package foo; public class Foo {}'
+    compile_task.from FileList['src/other/**.java']
+    mkpath 'target/classes/foo'
+    touch 'target/classes/foo/Foo.class'
+    File.utime(Time.now - 10, Time.now - 10, compile_task.target.to_s)
+    compile_task.invoke
+    File.stat(compile_task.target.to_s).mtime.should be_close(Time.now - 10, 2)
+  end
 end
 
 
-describe 'accessor task', :shared=>true do
+shared_examples_for 'accessor task' do
   it 'should return a task' do
     define('foo').send(@task_name).should be_kind_of(Rake::Task)
   end

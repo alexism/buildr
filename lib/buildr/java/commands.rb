@@ -13,7 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
 # Base module for all things Java.
 module Java
 
@@ -42,7 +41,7 @@ module Java
       # * :verbose -- If true, prints the command and all its argument.
       def java(*args, &block)
         options = Hash === args.last ? args.pop : {}
-        options[:verbose] ||= Buildr.application.options.trace || false
+        options[:verbose] ||= trace?(:java)
         rake_check_options options, :classpath, :java_args, :properties, :name, :verbose
 
         name = options[:name]
@@ -51,17 +50,44 @@ module Java
         end
 
         cmd_args = [path_to_bin('java')]
-        classpath = classpath_from(options)
-        cmd_args << '-classpath' << classpath.join(File::PATH_SEPARATOR) unless classpath.empty?
+        cp = classpath_from(options)
+        cmd_args << '-classpath' << cp.join(File::PATH_SEPARATOR) unless cp.empty?
         options[:properties].each { |k, v| cmd_args << "-D#{k}=#{v}" } if options[:properties]
         cmd_args += (options[:java_args] || (ENV['JAVA_OPTS'] || ENV['JAVA_OPTIONS']).to_s.split).flatten
         cmd_args += args.flatten.compact
-        unless Buildr.application.options.dryrun
-          info "Running #{name}" if name && options[:verbose]
-          block = lambda { |ok, res| fail "Failed to execute #{name}, see errors above" unless ok } unless block
-          cmd_args = cmd_args.map(&:inspect).join(' ') if Util.win_os?
-          sh(*cmd_args) do |ok, ps|
-            block.call ok, ps
+
+        tmp = nil
+        begin
+            # Windows can't handle cmd lines greater than 2048/8192 chars.
+            # If our cmd line is longer, we create a batch file and execute it instead.
+          if Util.win_os? &&  cmd_args.map(&:inspect).join(' ').size > 2048
+            # remove '-classpath' and the classpath itself from the cmd line.
+            cp_i = cmd_args.index{|x| x.starts_with('-classpath')}
+            2.times do
+              cmd_args.delete_at cp_i unless cp_i.nil?
+            end
+            # create tmp batch file.
+            tmp = Tempfile.new(['starter', '.bat'])
+            tmp.write "@echo off\n"
+            tmp.write "SET CLASSPATH=#{cp.join(File::PATH_SEPARATOR).gsub(%r{/}, '\\')}\n"
+            tmp.write cmd_args.map(&:inspect).join(' ')
+            tmp.close
+            # set new cmd line.
+            cmd_args = [tmp.path]
+          end
+          
+          unless Buildr.application.options.dryrun
+            info "Running #{name}" if name && options[:verbose]
+            block = lambda { |ok, res| fail "Failed to execute #{name}, see errors above" unless ok } unless block
+            cmd_args = cmd_args.map(&:inspect).join(' ') if Util.win_os?
+            sh(*cmd_args) do |ok, ps|
+              block.call ok, ps
+            end
+          end
+        ensure
+          unless tmp.nil?
+            tmp.close 
+            tmp.unlink
           end
         end
       end
@@ -84,23 +110,21 @@ module Java
 
         files = args.flatten.map(&:to_s).
           collect { |arg| File.directory?(arg) ? FileList["#{arg}/**/*.java"] : arg }.flatten
-        cmd_args = [ Buildr.application.options.trace ? '-verbose' : '-nowarn' ]
+        cmd_args = [ trace?(:apt) ? '-verbose' : '-nowarn' ]
         if options[:compile]
           cmd_args << '-d' << options[:output].to_s
         else
           cmd_args << '-nocompile' << '-s' << options[:output].to_s
         end
         cmd_args << '-source' << options[:source] if options[:source]
-        classpath = classpath_from(options)
-        tools = Java.tools_jar
-        classpath << tools if tools
-        cmd_args << '-classpath' << classpath.join(File::PATH_SEPARATOR) unless classpath.empty?
+        cp = classpath_from(options)
+        cmd_args << '-classpath' << cp.join(File::PATH_SEPARATOR) unless cp.empty?
         cmd_args += files
         unless Buildr.application.options.dryrun
           info 'Running apt'
           trace (['apt'] + cmd_args).join(' ')
           Java.load
-          Java.com.sun.tools.apt.Main.process(cmd_args.to_java(Java.java.lang.String)) == 0 or
+          ::Java::com.sun.tools.apt.Main.process(cmd_args.to_java(::Java::java.lang.String)) == 0 or
             fail 'Failed to process annotations, see errors above'
         end
       end
@@ -122,21 +146,22 @@ module Java
         rake_check_options options, :classpath, :sourcepath, :output, :javac_args, :name
 
         files = args.flatten.each { |f| f.invoke if f.respond_to?(:invoke) }.map(&:to_s).
-          collect { |arg| File.directory?(arg) ? FileList["#{arg}/**/*.java"] : arg }.flatten
+          collect { |arg| File.directory?(arg) ? FileList["#{File.expand_path(arg)}/**/*.java"] : File.expand_path(arg) }.flatten
         name = options[:name] || Dir.pwd
 
         cmd_args = []
-        classpath = classpath_from(options)
-        cmd_args << '-classpath' << classpath.join(File::PATH_SEPARATOR) unless classpath.empty?
-        cmd_args << '-sourcepath' << options[:sourcepath].join(File::PATH_SEPARATOR) if options[:sourcepath]
-        cmd_args << '-d' << options[:output].to_s if options[:output]
+        cp = classpath_from(options)
+        cmd_args << '-classpath' << cp.join(File::PATH_SEPARATOR) unless cp.empty?
+        cmd_args << '-sourcepath' << [options[:sourcepath]].flatten.join(File::PATH_SEPARATOR) if options[:sourcepath]
+        cmd_args << '-d' << File.expand_path(options[:output].to_s) if options[:output]
         cmd_args += options[:javac_args].flatten if options[:javac_args]
         cmd_args += files
         unless Buildr.application.options.dryrun
+          mkdir_p options[:output] if options[:output]
           info "Compiling #{files.size} source files in #{name}"
           trace (['javac'] + cmd_args).join(' ')
           Java.load
-          Java.com.sun.tools.javac.Main.compile(cmd_args.to_java(Java.java.lang.String)) == 0 or
+          ::Java::com.sun.tools.javac.Main.compile(cmd_args.to_java(::Java::java.lang.String)) == 0 or
             fail 'Failed to compile, see errors above'
         end
       end
@@ -159,8 +184,9 @@ module Java
       # * array -- Option with set of values separated by spaces.
       def javadoc(*args)
         options = Hash === args.last ? args.pop : {}
-
-        cmd_args = [ '-d', options[:output], Buildr.application.options.trace ? '-verbose' : '-quiet' ]
+        fail "No output defined for javadoc" if options[:output].nil?
+        options[:output] = File.expand_path(options[:output].to_s)
+        cmd_args = [ '-d', options[:output], trace?(:javadoc) ? '-verbose' : '-quiet' ]
         options.reject { |key, value| [:output, :name, :sourcepath, :classpath].include?(key) }.
           each { |key, value| value.invoke if value.respond_to?(:invoke) }.
           each do |key, value|
@@ -180,13 +206,14 @@ module Java
             cmd_args << "-#{option}" << paths.flatten.map(&:to_s).join(File::PATH_SEPARATOR) unless paths.empty?
           end
         end
-        cmd_args += args.flatten.uniq
+        files = args.each {|arg| arg.invoke if arg.respond_to?(:invoke)}.collect {|arg| arg.is_a?(Project) ? arg.compile.sources.collect{|dir| Dir["#{File.expand_path(dir.to_s)}/**/*.java"]} : File.expand_path(arg.to_s) }
+        cmd_args += files.flatten.uniq.map(&:to_s)
         name = options[:name] || Dir.pwd
         unless Buildr.application.options.dryrun
           info "Generating Javadoc for #{name}"
           trace (['javadoc'] + cmd_args).join(' ')
           Java.load
-          Java.com.sun.tools.javadoc.Main.execute(cmd_args.to_java(Java.java.lang.String)) == 0 or
+          ::Java::com.sun.tools.javadoc.Main.execute(cmd_args.to_java(::Java::java.lang.String)) == 0 or
             fail 'Failed to generate Javadocs, see errors above'
         end
       end
@@ -199,9 +226,9 @@ module Java
       # Returns the path to the specified Java command (with no argument to java itself).
       def path_to_bin(name = nil)
         home = ENV['JAVA_HOME'] or fail 'Are we forgetting something? JAVA_HOME not set.'
-        bin = File.expand_path(File.join(home, 'bin'))
+        bin = Util.normalize_path(File.join(home, 'bin'))
         fail 'JAVA_HOME environment variable does not point to a valid JRE/JDK installation.' unless File.exist? bin
-        File.expand_path(File.join(bin, name.to_s))
+        Util.normalize_path(File.join(bin, name.to_s))
       end
 
       # :call-seq:

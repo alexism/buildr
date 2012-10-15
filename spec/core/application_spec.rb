@@ -14,7 +14,7 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 
 describe Buildr::Application do
@@ -96,6 +96,30 @@ describe Buildr::Application do
       ARGV.push('--version')
       test_exit(0) { Buildr.application.send(:handle_options) }.should show(/Buildr #{Buildr::VERSION}.*/)
     end
+
+    it 'should enable tracing with --trace' do
+      ARGV.push('--trace')
+      Buildr.application.send(:handle_options)
+      Buildr.application.options.trace.should == true
+    end
+
+    it 'should enable tracing of [:foo, :bar] categories with --trace=foo,bar' do
+      ARGV.push('--trace=foo,bar')
+      Buildr.application.send(:handle_options)
+      Buildr.application.options.trace.should == true
+      Buildr.application.options.trace_categories.should == [:foo, :bar]
+      trace?(:foo).should == true
+      trace?(:not).should == false
+    end
+
+    it 'should enable tracing for all categories with --trace=all' do
+      ARGV.push('--trace=all')
+      Buildr.application.send(:handle_options)
+      Buildr.application.options.trace.should == true
+      Buildr.application.options.trace_all.should == true
+      trace?(:foo).should == true
+    end
+
   end
 
   describe 'gems' do
@@ -109,8 +133,9 @@ describe Buildr::Application do
       write 'build.yaml', <<-YAML
         gems:
         - rake
-        - rspec >= 1.2
+        - rspec ~> 2.1.0
       YAML
+      Buildr.application.should_receive(:listed_gems).and_return([[Gem.loaded_specs['rspec'],Gem.loaded_specs['rake']],[]])
       Buildr.application.load_gems
     end
 
@@ -146,7 +171,7 @@ describe Buildr::Application do
         public :load_gems
       end
       @spec = Gem::Specification.new do |spec|
-        spec.name = 'foo'
+        spec.name = 'buildr-foo'
         spec.version = '1.2'
       end
       $stdout.stub!(:isatty).and_return(true)
@@ -157,96 +182,47 @@ describe Buildr::Application do
     end
 
     it 'should install nothing if specified gems already installed' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem.loaded_specs['rspec']])
+      Buildr.application.should_receive(:listed_gems).and_return([[Gem.loaded_specs['rspec']],[]])
       Util.should_not_receive(:ruby)
       lambda { Buildr.application.load_gems }.should_not raise_error
     end
 
-    it 'should fail if required gem not found in remote repository' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([])
+    it 'should fail if required gem not installed' do
+      Buildr.application.should_receive(:listed_gems).and_return([[],[Gem::Dependency.new('buildr-foo', '>=1.1')]])
       lambda { Buildr.application.load_gems }.should raise_error(LoadError, /cannot be found/i)
     end
 
-    it 'should fail if need to install gem and not running in interactive mode' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $stdout.should_receive(:isatty).and_return(false)
-      lambda { Buildr.application.load_gems }.should raise_error(LoadError, /this build requires the gems/i)
-    end
-
-    it 'should ask permission before installing required gems' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $terminal.should_receive(:agree).with(/install/, true)
-      lambda { Buildr.application.load_gems }.should raise_error
-    end
-
-    it 'should fail if permission not granted to install gem' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $terminal.should_receive(:agree).and_return(false)
-      lambda { Buildr.application.load_gems }.should raise_error(LoadError, /cannot build without/i)
-    end
-
-    it 'should install gem if permission granted' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $terminal.should_receive(:agree).and_return(true)
-      Util.should_receive(:ruby) do |*args|
-        args.should include('install', 'foo', '-v', '1.2')
-      end
-      Buildr.application.should_receive(:gem).and_return(false)
-      Buildr.application.load_gems
-    end
-
-    it 'should reload gem cache after installing required gems' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $terminal.should_receive(:agree).and_return(true)
-      Util.should_receive(:ruby)
-      Gem.source_index.should_receive(:load_gems_in).with(Gem::SourceIndex.installed_spec_directories)
-      Buildr.application.should_receive(:gem).and_return(false)
-      Buildr.application.load_gems
-    end
-
     it 'should load previously installed gems' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem.loaded_specs['rspec']])
-      Buildr.application.should_receive(:gem).with('rspec', Gem.loaded_specs['rspec'].version.to_s)
-      Buildr.application.load_gems
-    end
-
-    it 'should load newly installed gems' do
-      Buildr.application.should_receive(:listed_gems).and_return([Gem::Dependency.new('foo', '>=1.1')])
-      Gem::SourceInfoCache.should_receive(:search).and_return([@spec])
-      $terminal.should_receive(:agree).and_return(true)
-      Util.should_receive(:ruby)
-      Buildr.application.should_receive(:gem).with('foo', @spec.version.to_s)
+      Gem.loaded_specs['rspec'].should_receive(:activate)
+      Buildr.application.should_receive(:listed_gems).and_return([[Gem.loaded_specs['rspec']],[]])
+      #Buildr.application.should_receive(:gem).with('rspec', Gem.loaded_specs['rspec'].version.to_s)
       Buildr.application.load_gems
     end
 
     it 'should default to >=0 version requirement if not specified' do
-      write 'build.yaml', 'gems: foo'
-      Gem::SourceInfoCache.should_receive(:search).with(Gem::Dependency.new('foo', '>=0')).and_return([])
-      lambda { Buildr.application.load_gems }.should raise_error
+      write 'build.yaml', 'gems: buildr-foo'
+      should_attempt_to_load_dependency(Gem::Dependency.new('buildr-foo', '>= 0'))
     end
 
     it 'should parse exact version requirement' do
-      write 'build.yaml', 'gems: foo 2.5'
-      Gem::SourceInfoCache.should_receive(:search).with(Gem::Dependency.new('foo', '=2.5')).and_return([])
-      lambda { Buildr.application.load_gems }.should raise_error
+      write 'build.yaml', 'gems: buildr-foo 2.5'
+      should_attempt_to_load_dependency(Gem::Dependency.new('buildr-foo', '=2.5'))
     end
 
     it 'should parse range version requirement' do
-      write 'build.yaml', 'gems: foo ~>2.3'
-      Gem::SourceInfoCache.should_receive(:search).with(Gem::Dependency.new('foo', '~>2.3')).and_return([])
-      lambda { Buildr.application.load_gems }.should raise_error
+      write 'build.yaml', 'gems: buildr-foo ~>2.3'
+      should_attempt_to_load_dependency(Gem::Dependency.new('buildr-foo', '~>2.3'))
     end
 
     it 'should parse multiple version requirements' do
-      write 'build.yaml', 'gems: foo >=2.0 !=2.1'
-      Gem::SourceInfoCache.should_receive(:search).with(Gem::Dependency.new('foo', ['>=2.0', '!=2.1'])).and_return([])
-      lambda { Buildr.application.load_gems }.should raise_error
+      write 'build.yaml', 'gems: buildr-foo >=2.0 !=2.1'
+      should_attempt_to_load_dependency(Gem::Dependency.new('buildr-foo', ['>=2.0', '!=2.1']))
+    end
+
+    def should_attempt_to_load_dependency(dep)
+      missing_gems = Buildr.application.send(:listed_gems)[1]
+      missing_gems.size.should eql(1)
+      missing_gems[0].eql?(dep)
     end
   end
 
@@ -536,13 +512,23 @@ describe Buildr, 'settings' do
 
     it 'should have the same timestamp as build.rb in home dir if the latter is newer (until version 1.6)' do
       Buildr::VERSION.should < '1.6'
-      write 'home/buildr.rb'; File.utime(@buildfile_time + 5, @buildfile_time + 5, 'home/buildr.rb')
-      Buildr.application.send :load_tasks
-      Buildr.application.buildfile.timestamp.should be_close(@buildfile_time + 5, 1)
+      buildfile_should_have_same_timestamp_as 'home/buildr.rb'
     end
 
     it 'should have the same timestamp as build.rb in home dir if the latter is newer' do
-      write 'home/.buildr/buildr.rb'; File.utime(@buildfile_time + 5, @buildfile_time + 5, 'home/.buildr/buildr.rb')
+      buildfile_should_have_same_timestamp_as 'home/.buildr/buildr.rb'
+    end
+
+    it 'should have the same timestamp as .buildr.rb in buildfile dir if the latter is newer' do
+      buildfile_should_have_same_timestamp_as '.buildr.rb'
+    end
+
+    it 'should have the same timestamp as _buildr.rb in buildfile dir if the latter is newer' do
+      buildfile_should_have_same_timestamp_as '_buildr.rb'
+    end
+
+    def buildfile_should_have_same_timestamp_as(file)
+      write file; File.utime(@buildfile_time + 5, @buildfile_time + 5, file)
       Buildr.application.send :load_tasks
       Buildr.application.buildfile.timestamp.should be_close(@buildfile_time + 5, 1)
     end

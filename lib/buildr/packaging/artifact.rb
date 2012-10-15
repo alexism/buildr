@@ -13,12 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/core/project'
-require 'buildr/core/transports'
-require 'buildr/packaging/artifact_namespace'
-
-
 module Buildr
 
   desc 'Download all artifacts'
@@ -26,6 +20,9 @@ module Buildr
 
   desc "Download all artifacts' sources"
   task 'artifacts:sources'
+
+  desc "Download all artifacts' javadoc"
+  task 'artifacts:javadoc'
 
   # Mixin with a task to make it behave like an artifact. Implemented by the packaging tasks.
   #
@@ -41,7 +38,7 @@ module Buildr
 
     class << self
     private
-    
+
       # :stopdoc:
       def included(mod)
         mod.extend self
@@ -60,7 +57,7 @@ module Buildr
         base.instance_eval { alias :uninstall :uninstall_old } if base.respond_to? :uninstall_old
         base.instance_eval { alias :upload :upload_old       } if base.respond_to? :upload_old
       end
-      
+
       # :startdoc:
     end
 
@@ -127,6 +124,17 @@ module Buildr
     end
 
     # :call-seq:
+    #   javadoc_artifact => Artifact
+    #
+    # Convenience method that returns the associated javadoc artifact
+    def javadoc_artifact
+      javadoc_spec = to_spec_hash.merge(:classifier=>'javadoc')
+      javadoc_task = OptionalArtifact.define_task(Buildr.repositories.locate(javadoc_spec))
+      javadoc_task.send :apply_spec, javadoc_spec
+      javadoc_task
+    end
+
+    # :call-seq:
     #   pom_xml => string
     #
     # Creates POM XML for this artifact.
@@ -143,20 +151,23 @@ module Buildr
     end
 
     def install
-      pom.install if pom && pom != self
       invoke
-      installed = Buildr.repositories.locate(self)
-      unless installed == name # If not already in local repository.
-        mkpath File.dirname(installed)
-        cp name, installed
-        info "Installed #{installed}"
+      in_local_repository = Buildr.repositories.locate(self)
+      if pom && pom != self && classifier.nil?
+        pom.invoke
+        pom.install
+      end
+      if name != in_local_repository
+        mkpath File.dirname(in_local_repository)
+        cp name, in_local_repository, :preserve => false
+        info "Installed #{name} to #{in_local_repository}"
       end
     end
 
     def uninstall
       installed = Buildr.repositories.locate(self)
       rm installed if File.exist?(installed)
-      pom.uninstall if pom && pom != self
+      pom.uninstall if pom && pom != self && classifier.nil?
     end
 
     # :call-seq:
@@ -190,12 +201,13 @@ module Buildr
 
       unless task = Buildr.application.lookup(uri+path)
         deps = [self]
-        deps << pom.upload_task( upload_to ) if pom && pom != self
+        deps << pom.upload_task( upload_to ) if pom && pom != self && classifier.nil?
 
         task = Rake::Task.define_task uri + path => deps do
           # Upload artifact relative to base URL, need to create path before uploading.
+          options = upload_to[:options] || {:permissions => upload_to[:permissions]}
           info "Deploying #{to_spec}"
-          URI.upload uri + path, name, :permissions=>upload_to[:permissions]
+          URI.upload uri + path, name, options
         end
       end
       task
@@ -230,7 +242,7 @@ module Buildr
     # The default artifact type.
     DEFAULT_TYPE = :jar
 
-    include ActsAsArtifact
+    include ActsAsArtifact, Buildr
 
     class << self
 
@@ -332,10 +344,10 @@ module Buildr
         # if the artifact knows how to build itself (e.g. download from a different location),
         # so don't perform it if the task found a different way to create the artifact.
         task.enhance do
-          unless File.exist?(name)
+          if download_needed? task
             info "Downloading #{to_spec}"
             download
-            pom.invoke rescue nil if pom && pom != self
+            pom.invoke rescue nil if pom && pom != self && classifier.nil?
           end
         end
       end
@@ -349,29 +361,51 @@ module Buildr
     #   install test
     # See also Buildr#install and Buildr#upload.
     def from(path)
-      path = path.is_a?(Rake::Task) ? path : File.expand_path(path.to_s)
-      unless exist?
-        enhance [path] do
-          path = File.expand_path(path.to_s)
-          mkpath File.dirname(name)
-          pom.invoke unless type == :pom
+      @from = path.is_a?(Rake::Task) ? path : File.expand_path(path.to_s)
+      enhance [@from] do
+        mkpath File.dirname(name)
+        cp @from.to_s, name
+      end
+      pom.content pom_xml unless pom == self || pom.has_content?
+      self
+    end
 
-          cp path, name
-          info "Installed #{path} as #{to_spec}"
+    # :call-seq:
+    #   content(string) => self
+    #
+    # Use this when you want to install or upload an artifact from a given content, for example:
+    #   readme = artifact('com.example:readme:txt:1.0').content(<<-EOF
+    #     Please visit our website at http://example.com/readme
+    #   <<EOF
+    #   install readme
+    #
+    # If the argument is not a string, it will be converted to a string using to_s
+    def content(string = nil)
+      return @content unless string
+
+      unless @content
+        enhance do
+          write name, @content
+        end
+
+        class << self
+          # Force overwriting target since we don't have source file
+          # to check for timestamp modification
+          def needed?
+            true
+          end
         end
       end
-      unless type == :pom
-        pom.enhance do
-          unless pom.exist?
-          mkpath File.dirname(pom.name)
-          File.open(pom.name, 'w') { |file| file.write pom.pom_xml }
-        end
-      end
-      end
+      @content = string
+      pom.content pom_xml unless pom == self || pom.has_content?
       self
     end
 
   protected
+
+    def has_content?
+      @from || @content
+    end
 
     # :call-seq:
     #   download
@@ -389,7 +423,7 @@ module Buildr
       exact_success = remote.find do |repo_url|
         begin
           path = "#{group_path}/#{id}/#{version}/#{File.basename(name)}"
-          URI.download repo_url + path, name
+          download_artifact(repo_url + path)
           true
         rescue URI::NotFoundError
           false
@@ -414,7 +448,8 @@ module Buildr
         snapshot_url = current_snapshot_repo_url(repo_url)
         if snapshot_url
           begin
-            URI.download snapshot_url, name
+            download_artifact snapshot_url
+            true
           rescue URI::NotFoundError
             false
           end
@@ -430,10 +465,14 @@ module Buildr
         metadata_xml = StringIO.new
         URI.download repo_url + metadata_path, metadata_xml
         metadata = REXML::Document.new(metadata_xml.string).root
-        timestamp = REXML::XPath.first(metadata, '//timestamp').text
-        build_number = REXML::XPath.first(metadata, '//buildNumber').text
+        timestamp = REXML::XPath.first(metadata, '//timestamp')
+        build_number = REXML::XPath.first(metadata, '//buildNumber')
+        error "No timestamp provided for the snapshot #{to_spec}" if timestamp.nil?
+        error "No build number provided for the snapshot #{to_spec}" if build_number.nil?
+        return nil if timestamp.nil? || build_number.nil?
         snapshot_of = version[0, version.size - 9]
-        repo_url + "#{group_path}/#{id}/#{version}/#{id}-#{snapshot_of}-#{timestamp}-#{build_number}.#{type}"
+        classifier_snippet = (classifier != nil) ? "-#{classifier}" : ""
+        repo_url + "#{group_path}/#{id}/#{version}/#{id}-#{snapshot_of}-#{timestamp.text}-#{build_number.text}#{classifier_snippet}.#{type}"
       rescue URI::NotFoundError
         nil
       end
@@ -442,6 +481,71 @@ module Buildr
     def fail_download(remote_uris)
       fail "Failed to download #{to_spec}, tried the following repositories:\n#{remote_uris.join("\n")}"
     end
+
+   protected
+
+    # :call-seq:
+    #   needed?
+    #
+    # Validates whether artifact is required to be downloaded from repository
+    def needed?
+      return true if snapshot? && File.exist?(name) && (update_snapshot? || old?)
+      super
+    end
+
+  private
+
+    # :call-seq:
+    #   download_artifact
+    #
+    # Downloads artifact from given repository,
+    # supports downloading snapshot artifact with relocation on succeed to local repository
+    def download_artifact(path)
+      download_file = "#{name}.#{Time.new.to_i}"
+      begin
+        URI.download path, download_file
+        if File.exist?(download_file)
+          FileUtils.mkdir_p(File.dirname(name))
+          FileUtils.mv(download_file, name)
+        end
+      ensure
+        File.delete(download_file) if File.exist?(download_file)
+      end
+    end
+
+    # :call-seq:
+    #   :download_needed?
+    #
+    # Validates whether artifact is required to be downloaded from repository
+    def download_needed?(task)
+      return true if !File.exist?(name)
+
+      if snapshot?
+        return false if offline? && File.exist?(name)
+        return true if update_snapshot? || old?
+      end
+
+      return false
+    end
+
+    def update_snapshot?
+      Buildr.application.options.update_snapshots
+    end
+
+    def offline?
+      Buildr.application.options.work_offline
+    end
+
+    # :call-seq:
+    #   old?
+    #
+    # Checks whether existing artifact is older than period from build settings or one day
+    def old?
+      settings = Buildr.application.settings
+      time_to_be_old = settings.user[:expire_time] || settings.build[:expire_time] || 60 * 60 * 24
+      File.mtime(name).to_i < (Time.new.to_i - time_to_be_old)
+    end
+
   end
 
 
@@ -597,7 +701,8 @@ module Buildr
     #   repositories.release_to[:password] = 'secret'
     def release_to
       unless @release_to
-        value = Buildr.settings.user['repositories'] && Buildr.settings.user['repositories']['release_to']
+        value = (Buildr.settings.user['repositories'] && Buildr.settings.user['repositories']['release_to']) \
+          || (Buildr.settings.build['repositories'] && Buildr.settings.build['repositories']['release_to'])
         @release_to = Hash === value ? value.inject({}) { |hash, (key, value)| hash.update(key.to_sym=>value) } : { :url=>Array(value).first }
       end
       @release_to
@@ -639,15 +744,18 @@ module Buildr
   # To specify an artifact and the means for creating it:
   #   download(artifact('dojo:dojo-widget:zip:2.0')=>
   #     'http://download.dojotoolkit.org/release-2.0/dojo-2.0-widget.zip')
-  def artifact(spec, &block) #:yields:task
+  def artifact(spec, path = nil, &block) #:yields:task
     spec = artifact_ns.fetch(spec) if spec.kind_of?(Symbol)
     spec = Artifact.to_hash(spec)
     unless task = Artifact.lookup(spec)
-      task = Artifact.define_task(repositories.locate(spec))
+      task = Artifact.define_task(path || repositories.locate(spec))
       task.send :apply_spec, spec
       Rake::Task['rake:artifacts'].enhance [task]
       Artifact.register(task)
-      Rake::Task['artifacts:sources'].enhance [task.sources_artifact] unless spec[:type] == :pom
+      unless spec[:type] == :pom
+        Rake::Task['artifacts:sources'].enhance [task.sources_artifact]
+        Rake::Task['artifacts:javadoc'].enhance [task.javadoc_artifact]
+      end
     end
     task.enhance &block
   end
@@ -694,28 +802,38 @@ module Buildr
       when Struct
         set |= artifacts(spec.values)
       else
-        fail "Invalid artifact specification in #{specs.inspect}"
+        if spec.respond_to? :to_spec
+          set |= artifacts(spec.to_spec)
+        else
+          fail "Invalid artifact specification in #{specs.inspect}"
+        end
       end
     end
   end
 
-  def transitive(*specs)
-    specs.flatten.inject([]) do |set, spec|
+  def transitive(*args)
+    options = Hash === args.last ? args.pop : {}
+    dep_opts = {
+      :scopes   => options[:scopes] || [nil, "compile", "runtime", "provided"],
+      :optional => options[:optional]
+    }
+    specs = args.flatten
+    specs.inject([]) do |set, spec|
       case spec
       when /([^:]+:){2,4}/ # A spec as opposed to a file name.
         artifact = artifact(spec)
         set |= [artifact] unless artifact.type == :pom
-        set |= POM.load(artifact.pom).dependencies.map { |spec| artifact(spec) }
+        set |= POM.load(artifact.pom).dependencies(dep_opts).map { |spec| artifact(spec) }
       when Hash
-        set |= [transitive(spec)]
+        set |= [transitive(spec, options)]
       when String # Must always expand path.
-        set |= transitive(file(File.expand_path(spec)))
+        set |= transitive(file(File.expand_path(spec)), options)
       when Project
-        set |= transitive(spec.packages)
+        set |= transitive(spec.packages, options)
       when Rake::Task
-        set |= spec.respond_to?(:to_spec) ? transitive(spec.to_spec) : [spec]
+        set |= spec.respond_to?(:to_spec) ? transitive(spec.to_spec, options) : [spec]
       when Struct
-        set |= transitive(spec.values)
+        set |= transitive(spec.values, options)
       else
         fail "Invalid artifact specification in: #{specs.to_s}"
       end
@@ -748,7 +866,7 @@ module Buildr
   end
 
   # :call-seq:
-  #   install(artifacts)
+  #   install(artifacts) => install_task
   #
   # Installs the specified artifacts in the local repository as part of the install task.
   #
@@ -756,13 +874,15 @@ module Buildr
   #   install artifact('group:id:jar:1.0').from('some_jar.jar')
   #   $ buildr install
   def install(*args, &block)
-    artifacts = artifacts(args)
+    artifacts = artifacts(args).uniq
     raise ArgumentError, 'This method can only install artifacts' unless artifacts.all? { |f| f.respond_to?(:to_spec) }
-    all = (artifacts + artifacts.map { |artifact| artifact.pom }).uniq
-    task('install').tap do |task|
-      task.enhance all, &block
-      task 'uninstall' do
-        all.map(&:to_s ).each { |file| rm file if File.exist?(file) }
+    task('install').tap do |install|
+      install.enhance(artifacts) do
+        artifacts.each(&:install)
+      end
+      install.enhance &block if block
+      task('uninstall') do
+        artifacts.map(&:to_s ).each { |file| rm file if File.exist?(file) }
       end
     end
   end

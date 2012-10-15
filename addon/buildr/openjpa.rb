@@ -13,10 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/java'
-
-
 module Buildr
 
   # Provides OpenJPA bytecode enhancement and Mapping tool task. Require explicitly using <code>require "buildr/openjpa"</code>.
@@ -33,8 +29,6 @@ module Buildr
       "org.apache.geronimo.specs:geronimo-j2ee-connector_1.5_spec:jar:1.0",
       "org.apache.geronimo.specs:geronimo-jta_1.0.1B_spec:jar:1.0",
       "net.sourceforge.serp:serp:jar:1.11.0" ]
-
-    Java.classpath << REQUIRES
 
     class << self
 

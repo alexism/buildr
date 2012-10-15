@@ -1,3 +1,4 @@
+
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with this
 # work for additional information regarding copyright ownership.  The ASF
@@ -12,12 +13,6 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
 # License for the specific language governing permissions and limitations under
 # the License.
-
-
-require 'buildr/core/build'
-require 'buildr/core/compile'
-require 'buildr/java/ant'
-
 
 module Buildr
 
@@ -184,7 +179,7 @@ module Buildr
     end
 
     # JUnit version number.
-    VERSION = '4.7'
+    VERSION = '4.8.2'
 
     class << self
       # :call-seq:
@@ -219,10 +214,15 @@ module Buildr
     end
 
     def tests(dependencies) #:nodoc:
-      filter_classes(dependencies,
-                     :interfaces => %w{junit.framework.TestCase},
-                     :class_annotations => %w{org.junit.runner.RunWith},
-                     :method_annotations => %w{org.junit.Test})
+      if (self.class.version.to_s[0,1].to_i < 4)
+        filter_classes(dependencies, :interfaces => %w{junit.framework.TestCase})
+      else
+        filter_classes(dependencies,
+                       :interfaces => %w{junit.framework.TestCase},
+                       :class_annotations => %w{org.junit.runner.RunWith},
+                       :method_annotations => %w{org.junit.Test})
+      end
+
     end
 
     def run(tests, dependencies) #:nodoc:
@@ -323,12 +323,20 @@ module Buildr
     def run(tests, dependencies) #:nodoc:
       cmd_args = ['-log', '2', '-sourcedir', task.compile.sources.join(';'), '-suitename', task.project.id ]
       cmd_args << '-d' << task.report_to.to_s
+      exclude_args = options[:excludegroups] || []
+      if !exclude_args.empty?
+        cmd_args << '-excludegroups' << exclude_args.join(",")
+      end
+      groups_args = options[:groups] || []
+      if !groups_args.empty?
+        cmd_args << '-groups' << groups_args.join(",")
+      end
       # run all tests in the same suite
       cmd_args << '-testclass' << tests
-      
+
       cmd_options = { :properties=>options[:properties], :java_args=>options[:java_args],
         :classpath=>dependencies, :name => "TestNG in #{task.send(:project).name}" }
-      
+
       tmp = nil
       begin
         tmp = Tempfile.open("testNG")
@@ -350,8 +358,67 @@ module Buildr
 
   end
 
+  # A composite test framework that runs multiple other test frameworks.
+  #
+  # e.g.,
+  #        test.using :multitest, :frameworks => [ Buildr::JUnit, Buildr::TestNG ], :options = {
+  #          :junit => { :fork => true },
+  #          :testng => { ... }
+  #        }
+  #
+  class MultiTest < Buildr::TestFramework::Java
+    # TODO: Support multiple test report locations, one per framework
+
+    class << self
+      def applies_to?(project)  #:nodoc:
+        false # no auto-detection, should be set explicitly
+      end
+    end
+
+    attr_accessor :frameworks
+
+    def initialize(task, options) #:nodoc:
+      super
+      fail "Missing :frameworks option" unless options[:frameworks]
+      @frameworks = options[:frameworks].map do |f|
+        framework_options = (options[:options] || {})[f.to_sym] || {}
+        f.new(task, options)
+      end
+    end
+
+    def dependencies #:nodoc:
+      unless @dependencies
+        @dependencies = TestFramework::Java.dependencies
+        @dependencies += @frameworks.map { |f| f.dependencies }.flatten
+      end
+      @dependencies
+    end
+
+
+    def tests(dependencies)
+      @frameworks.map { |f| f.tests(dependencies) }.flatten
+    end
+
+    def run(tests, dependencies)  #:nodoc:
+      framework_for_test = @frameworks.inject({}) do |hash, f|
+        f.tests(dependencies).each { |t| hash[t] = f }
+        hash
+      end
+
+      tests_by_framework = tests.group_by { |t| framework_for_test[t] }
+
+      passed = []
+      tests_by_framework.each do |f, tests|
+        passed += f.run(tests, dependencies)
+      end
+      passed
+    end
+  end # MultiTest
+
 end # Buildr
 
 
 Buildr::TestFramework << Buildr::JUnit
 Buildr::TestFramework << Buildr::TestNG
+Buildr::TestFramework << Buildr::MultiTest
+

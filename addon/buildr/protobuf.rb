@@ -13,9 +13,21 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
 module Buildr
-  # Provides Protocol buffer code generation tasks. Require explicitly using <code>require "buildr/protobuf"</code>.
+
+  # Provides Protocol buffer code generation tasks.
+  #
+  # Require explicitly using <code>require "buildr/protobuf"</code>.
+  #
+  # Usage in your project:
+  #
+  #   protoc _("path/to/proto/files")
+  #
+  # and also supports two options,
+  #
+  #  :output => "target/generated/protoc"  # this is the default
+  #  :lang => "java"                       # defaults to compile.language
+  #
   module Protobuf
     class << self
       def protoc(*args)

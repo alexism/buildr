@@ -13,10 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/java'
-
-
 module Buildr
 
   # Provides the <code>emma:html</code> and <code>emma:xml</code> tasks.
@@ -62,7 +58,7 @@ module Buildr
         Buildr.ant 'emma' do |ant|
           ant.taskdef :resource=>'emma_ant.properties',
             :classpath=>Buildr.artifacts(dependencies).each(&:invoke).map(&:to_s).join(File::PATH_SEPARATOR)
-          ant.emma :verbosity=>(Buildr.application.options.trace ? 'verbose' : 'warning') do
+          ant.emma :verbosity=>(trace?(:emma) ? 'verbose' : 'warning') do
             yield ant
           end
         end

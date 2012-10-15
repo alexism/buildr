@@ -14,12 +14,14 @@
 # the License.
 
 
-require File.join(File.dirname(__FILE__), 'test_coverage_helper')
+require File.expand_path(File.join(File.dirname(__FILE__), 'test_coverage_helper'))
 Sandbox.require_optional_extension 'buildr/java/emma'
 artifacts(Buildr::Emma::dependencies).map(&:invoke)
 
 
 describe Buildr::Emma do
+  include TestCoverageHelper
+
   before do
     # Reloading the extension because the sandbox removes all its actions
     Buildr.module_eval { remove_const :Emma }

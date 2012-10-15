@@ -13,7 +13,6 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
 module Buildr
 
   # Base class for ZipTask, TarTask and other archives.
@@ -113,7 +112,10 @@ module Buildr
         expanders = files.collect do |file|
           @sources << proc { file.to_s }
           expander = ZipExpander.new(file)
-          @actions << proc { |file_map| expander.expand(file_map, path) }
+          @actions << proc do |file_map|
+            file.invoke() if file.is_a?(Rake::Task)
+            expander.expand(file_map, path)
+          end
           expander
         end
         Merge.new(expanders)
@@ -211,16 +213,19 @@ module Buildr
                 path = rel_path.split('/')[1..-1]
                 path.unshift as unless as == '.'
                 dest = "#{@path}#{path.join('/')}"
-                unless excluded?(dest) 
+                unless excluded?(dest)
                   trace "Adding #{dest}"
                   file_map[dest] = file
                 end
               end
-            end
-            unless as == "."
-              trace "Adding #{@path}#{as}"
+              unless as == "."
+                trace "Adding #{@path}#{as}/"
+                file_map["#{@path}#{as}/"] = nil # :as is a folder, so the trailing / is required.
+              end
+            else
               file_map["#{@path}#{as}"] = file
             end
+
           end
         end
       end
@@ -463,7 +468,15 @@ module Buildr
     def invoke_prerequisites(args, chain) #:nodoc:
       @prepares.each { |prepare| prepare.call(self) }
       @prepares.clear
-      @prerequisites |= @paths.collect { |name, path| path.sources }.flatten
+
+      file_map = {}
+      @paths.each do |name, path|
+        path.add_files(file_map)
+      end
+
+      # filter out Procs (dynamic content), nils and others
+      @prerequisites |= file_map.values.select { |src| src.is_a?(String) || src.is_a?(Rake::Task) }
+
       super
     end
 

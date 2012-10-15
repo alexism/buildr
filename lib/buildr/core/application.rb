@@ -36,17 +36,9 @@
 # SOFTWARE.
 
 
-require 'rake'
-require 'highline/import'
-require 'rubygems/source_info_cache'
-require 'buildr/core/util'
-Gem.autoload :SourceInfoCache, 'rubygems/source_info_cache'
-
-
 # Gem::user_home is nice, but ENV['HOME'] lets you override from the environment.
 ENV['HOME'] ||= File.expand_path(Gem::user_home)
 ENV['BUILDR_ENV'] ||= 'development'
-
 
 module Buildr
 
@@ -187,6 +179,20 @@ module Buildr
       @on_failure << block
     end
 
+    # Call on_completion hooks with the given title and message
+    def build_completed(title, message)
+      @on_completion.each do |block|
+        block.call(title, message) rescue nil
+      end
+    end
+
+    # Call on_failure hooks with the given title, message and exception
+    def build_failed(title, message, ex = nil)
+      @on_failure.each do |block|
+        block.call(title, message, ex) rescue nil
+      end
+    end
+
     # :call-seq:
     #   deprecated(message)
     #
@@ -241,9 +247,7 @@ module Buildr
           # On OS X this will load Cocoa and Growl which takes half a second we
           # don't want to measure, so put this after the console message.
           title, message = "Your build has completed", "#{Dir.pwd}\nbuildr #{@top_level_tasks.join(' ')}"
-          @on_completion.each do |block|
-            block.call(title, message) rescue nil
-          end
+          build_completed(title, message)
         end
       end
     end
@@ -343,9 +347,11 @@ module Buildr
             options.full_description = false
           }
         ],
-        ['--trace', '-t', "Turn on invoke/execute tracing, enable full backtrace.",
+        ['--trace', '-t [CATEGORIES]', "Turn on invoke/execute tracing, enable full backtrace.",
           lambda { |value|
             options.trace = true
+            options.trace_categories = value ? value.split(',').map { |v| v.downcase.to_sym } : []
+            options.trace_all = options.trace_categories.include? :all
             verbose(true)
           }
         ],
@@ -356,6 +362,18 @@ module Buildr
           lambda { |value|
             puts "Buildr #{Buildr::VERSION}#{RUBY_PLATFORM[/java/] ? " (JRuby #{JRUBY_VERSION})" : ""}"
             exit 0
+          }
+        ],
+        ['--offline', '-o', "Do not try to download anything",
+          lambda { |value|
+            trace 'Working in offline mode; snapshot will not be updated.'
+            options.work_offline = true
+          }
+        ],
+        ['--update-snapshots', '-u', "Force updating all dependencies whose version contains SNAPSHOT",
+          lambda { |value|
+            trace 'Force update of SNAPSHOT artifacts.'
+            options.update_snapshots = true
           }
         ]
       ]
@@ -402,36 +420,35 @@ module Buildr
 
     # Load/install all Gems specified in build.yaml file.
     def load_gems #:nodoc:
-      missing_deps, installed = listed_gems.partition { |gem| gem.is_a?(Gem::Dependency) }
+      installed, missing_deps = listed_gems
       unless missing_deps.empty?
-        newly_installed = Util::Gems.install(*missing_deps)
-        installed += newly_installed
+        fail Gem::LoadError, "Build requires the gems #{missing_deps.join(', ')}, which cannot be found in the local repository. Please install the gems before attempting to build project."
       end
-      installed.each do |spec|
-        if gem(spec.name, spec.version.to_s)
-          # TODO: is this intended to load rake tasks from the installed gems?
-          # We should use a convention like .. if the gem has a _buildr.rb file, load it.
-
-          #FileList[spec.require_paths.map { |path| File.expand_path("#{path}/*.rb", spec.full_gem_path) }].
-          #  map { |path| File.basename(path) }.each { |file| require file }
-          #FileList[File.expand_path('tasks/*.rake', spec.full_gem_path)].each do |file|
-          #  Buildr.application.add_import file
-          #end
-        end
-      end
+      installed.each { |spec| spec.activate }
       @gems = installed
     end
 
-    # Returns Gem::Specification for every listed and installed Gem, Gem::Dependency
-    # for listed and uninstalled Gem, which is the installed before loading the buildfile.
+    # Returns two lists. The first contains a Gem::Specification for every listed and installed
+    # Gem, the second contains a Gem::Dependency for every listed and uninstalled Gem.
     def listed_gems #:nodoc:
-      Array(settings.build['gems']).map do |dep|
-        name, trail = dep.scan(/^\s*(\S*)\s*(.*)\s*$/).first
-        versions = trail.scan(/[=><~!]{0,2}\s*[\d\.]+/)
-        versions = ['>= 0'] if versions.empty?
-        dep = Gem::Dependency.new(name, versions)
-        Gem::SourceIndex.from_installed_gems.search(dep).last || dep
+      found = []
+      missing = []
+      Array(settings.build['gems']).each do |dep|
+        name, versions = parse_gem_dependency(dep)
+        begin
+          found << Gem::Specification.find_by_name(name, versions)
+        rescue Exception
+          missing << Gem::Dependency.new(name, versions)
+        end
       end
+      return [found, missing]
+    end
+
+    def parse_gem_dependency(dep) #:nodoc:
+      name, trail = dep.scan(/^\s*(\S*)\s*(.*)\s*$/).first
+      versions = trail.scan(/[=><~!]{0,2}\s*[\d\.]+/)
+      versions = ['>= 0'] if versions.empty?
+      return name, versions
     end
 
     # Load artifact specs from the build.yaml file, making them available
@@ -453,11 +470,18 @@ module Buildr
       if File.exist?(old) && !File.exist?(new)
         warn "Deprecated: Please move buildr.rb from your home directory to the .buildr directory in your home directory"
       end
+
       # Load home/.buildr/buildr.rb in preference
       files = [ File.exist?(new) ? new : old, 'buildr.rb' ].select { |file| File.exist?(file) }
       files += [ File.expand_path('buildr.rake', ENV['HOME']), File.expand_path('buildr.rake') ].
         select { |file| File.exist?(file) }.each { |file| warn "Please use '#{file.ext('rb')}' instead of '#{file}'" }
       files += (options.rakelib || []).collect { |rlib| Dir["#{rlib}/*.rake"] }.flatten
+
+      # Load .buildr/_buildr.rb same directory as buildfile
+      %w{.buildr.rb _buildr.rb}.each do |f|
+        local_buildr = File.expand_path("#{File.dirname(Buildr.application.buildfile.to_s)}/#{f}")
+        files << local_buildr if File.exist?( local_buildr )
+      end
 
       files.each do |file|
         unless $LOADED_FEATURES.include?(file)
@@ -483,7 +507,7 @@ module Buildr
         width = displayable_tasks.collect { |t| t.name_with_args.length }.max || 10
         max_column = truncate_output? ? terminal_width - name.size - width - 7 : nil
         displayable_tasks.each do |t|
-          printf "#{name} %-#{width}s  # %s\n",
+          printf "buildr %-#{width}s  # %s\n",
             t.name_with_args, max_column ? truncate(t.comment, max_column) : t.comment
         end
       end
@@ -509,9 +533,7 @@ module Buildr
       rescue Exception => ex
         ex_msg = ex.class.name == "Exception" ? ex.message : "#{ex.class.name} : #{ex.message}"
         title, message = "Your build failed with an error", "#{Dir.pwd}:\n#{ex_msg}"
-        @on_failure.each do |block|
-          block.call(title, message, ex) rescue nil
-        end
+        build_failed(title, message, ex)
         # Exit with error message
         $stderr.puts "Buildr aborted!"
         $stderr.puts $terminal.color(ex_msg, :red)
@@ -602,6 +624,13 @@ def trace(message)
   puts message if Buildr.application.options.trace
 end
 
+def trace?(*category)
+  options = Buildr.application.options
+  return options.trace if category.empty?
+  return true if options.trace_all
+  return false unless options.trace_categories
+  options.trace_categories.include?(category.first)
+end
 
 module Rake #:nodoc
   # Rake's circular dependency checks (InvocationChain) only applies to task prerequisites,

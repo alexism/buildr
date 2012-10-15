@@ -13,7 +13,7 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-require File.join(File.dirname(__FILE__), '../spec_helpers')
+require File.expand_path(File.join(File.dirname(__FILE__), '..', 'spec_helpers'))
 
 describe Buildr::ArtifactNamespace do
 
@@ -158,6 +158,21 @@ describe Buildr::ArtifactNamespace do
         artifact_ns[:b].should be_satisfied_by('a:b:c:1')
         artifact_ns[:b].should_not be_satisfied_by('a:b:c:2')
         artifact_ns[:b].should_not be_satisfied_by('d:b:c:1')
+        artifact_ns[:b].version.should == '1'
+      end
+    end
+
+    it 'should accept an artifact spec with classifier' do
+      define 'one' do
+        artifact_ns.need 'a:b:c:d:1'
+        # referenced by spec
+        artifact_ns['a:b:c:d:'].should_not be_selected
+
+        # referenced by name
+        artifact_ns[:b].should_not be_selected
+        artifact_ns[:b].should be_satisfied_by('a:b:c:d:1')
+        artifact_ns[:b].should_not be_satisfied_by('a:b:c:d:2')
+        artifact_ns[:b].should_not be_satisfied_by('d:b:c:d:1')
         artifact_ns[:b].version.should == '1'
       end
     end
@@ -661,7 +676,7 @@ describe "Extension using ArtifactNamespace" do
           end
         end
 
-        include Spec::Matchers # for assertions
+        include RSpec::Matchers # for assertions
 
         # Called with the ArtifactRequirement that has just been selected
         # by a user. This allows extension author to selectively perform

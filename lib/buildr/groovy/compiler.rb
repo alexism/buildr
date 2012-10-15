@@ -16,6 +16,17 @@
 
 module Buildr::Groovy
 
+  REQUIRES = ArtifactNamespace.for(self) do |ns|
+    ns.jansi! 'org.fusesource.jansi:jansi:jar:1.2.1'
+    ns.jline! 'jline:jline:jar:0.9.94'
+  end
+
+  class << self
+    def dependencies #:nodoc:
+      REQUIRES.artifacts + Groovyc.dependencies
+    end
+  end
+
   # Groovyc compiler:
   #  compile.using(:groovyc)
   #
@@ -53,11 +64,11 @@ module Buildr::Groovy
     # The groovyc compiler jars are added to classpath at load time,
     # if you want to customize artifact versions, you must set them on the
     #
-    #      artifact_ns['Buildr::Compiler::Groovyc'].groovy = '1.7.1'
+    #      artifact_ns(Buildr::Groovy::Groovyc).groovy = '1.7.1'
     #
     # namespace before this file is required.
     REQUIRES = ArtifactNamespace.for(self) do |ns|
-      ns.groovy!       'org.codehaus.groovy:groovy:jar:>=1.7.1'
+      ns.groovy!       'org.codehaus.groovy:groovy:jar:>=1.7.5'
       ns.commons_cli!  'commons-cli:commons-cli:jar:>=1.2'
       ns.asm!          'asm:asm:jar:>=3.2'
       ns.antlr!        'antlr:antlr:jar:>=2.7.7'
@@ -95,7 +106,7 @@ module Buildr::Groovy
       options[:debug] = Buildr.options.debug if options[:debug].nil?
       options[:deprecation] ||= false
       options[:optimise] ||= false
-      options[:verbose] ||= Buildr.application.options.trace if options[:verbose].nil?
+      options[:verbose] ||= trace?(:groovyc) if options[:verbose].nil?
       options[:warnings] = verbose if options[:warnings].nil?
       options[:javac] = OpenObject.new if options[:javac].nil?
     end

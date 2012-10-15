@@ -13,10 +13,8 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-
-require 'buildr/packaging/archive'
-gem 'archive-tar-minitar' ; autoload :Archive, 'archive/tar/minitar'
-
+autoload :Archive, 'archive/tar/minitar'
+autoload :Zlib, 'zlib'
 
 module Buildr
 
@@ -95,7 +93,10 @@ module Buildr
         file_map.each do |path, content|
           if content.respond_to?(:call)
             tar.add_file(path, options) { |os, opts| content.call os }
-          elsif content.nil? || File.directory?(content.to_s)
+          elsif content.nil?
+          elsif File.directory?(content.to_s)
+            stat = File.stat(content.to_s)
+            tar.mkdir(path, options.merge(:mode=>stat.mode, :mtime=>stat.mtime, :uid=>stat.uid, :gid=>stat.gid))
           else
             File.open content.to_s, 'rb' do |is|
               tar.add_file path, options.merge(:mode=>is.stat.mode, :mtime=>is.stat.mtime, :uid=>is.stat.uid, :gid=>is.stat.gid) do |os, opts|

@@ -13,13 +13,8 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-require 'buildr/core/project'
-require 'buildr/core/common'
-require 'buildr/core/compile'
-require 'buildr/packaging'
-
 module Buildr::Scala
-  DEFAULT_VERSION = '2.7.7'   # currently the latest (Oct 31, 2009)
+  DEFAULT_VERSION = '2.9.1'
 
   class << self
 
@@ -59,13 +54,15 @@ module Buildr::Scala
       Buildr.settings.build['scala.version'] || installed_version || DEFAULT_VERSION
     end
 
-    def compatible_28?
-      major, minor = version.match(/^(\d)\.(\d)/).to_a[1,2]
-      if major && minor
-        (major.to_i == 2 && minor.to_i >= 8) || (major.to_i > 2)
-      else
-        false
-      end
+    # check if version matches any of the given prefixes
+    def version?(*v)
+      v.any? { |v| version.index(v.to_s) == 0 }
+    end
+
+    # returns Scala version without build number.
+    # e.g.  "2.9.0-1" => "2.9.0"
+    def version_without_build
+      version.split('-')[0]
     end
   end
 
@@ -156,17 +153,17 @@ module Buildr::Scala
       options[:warnings] = verbose if options[:warnings].nil?
       options[:deprecation] ||= false
       options[:optimise] ||= false
-      options[:make] ||= :transitivenocp if Scala.compatible_28?
+      options[:make] ||= :transitivenocp if Scala.version? 2.8
       options[:javac] ||= {}
 
       @java = Javac.new(project, options[:javac])
     end
 
     def compile(sources, target, dependencies) #:nodoc:
-      check_options(options, OPTIONS + (Scala.compatible_28? ? [:make] : []))
+      check_options(options, OPTIONS + (Scala.version?(2.8) ? [:make] : []))
 
       java_sources = java_sources(sources)
-      enable_dep_tracing = Scala.compatible_28? && java_sources.empty?
+      enable_dep_tracing = Scala.version?(2.8) && java_sources.empty?
 
       dependencies.unshift target if enable_dep_tracing
 
@@ -214,7 +211,59 @@ module Buildr::Scala
       end
     end
 
+  protected
+
+    # :nodoc: see Compiler:Base
+    def compile_map(sources, target)
+      target_ext = self.class.target_ext
+      ext_glob = Array(self.class.source_ext).join(',')
+      sources.flatten.map{|f| File.expand_path(f)}.inject({}) do |map, source|
+        sources = if File.directory?(source)
+          FileList["#{source}/**/*.{#{ext_glob}}"].reject { |file| File.directory?(file) }
+        else
+          [source]
+        end
+
+        sources.each do |source|
+          # try to extract package name from .java or .scala files
+          if ['.java', '.scala'].include? File.extname(source)
+            name = File.basename(source).split(".")[0]
+            package = findFirst(source, /^\s*package\s+([^\s;]+)\s*;?\s*/)
+            packages = count(source, /^\s*package\s+([^\s;]+)\s*;?\s*/)
+            found = findFirst(source, /((trait)|(class)|(object))\s+(#{name})/)
+
+            # if there's only one package statement and we know the target name, then we can depend
+            # directly on a specific file, otherwise, we depend on the general target
+            if (found && packages == 1)
+              map[source] = package ? File.join(target, package[1].gsub('.', '/'), name.ext(target_ext)) : target
+            else
+              map[source] = target
+            end
+
+          elsif
+            map[source] = target
+          end
+        end
+
+        map.each do |key,value|
+          map[key] = first_file unless map[key]
+        end
+
+        map
+      end
+    end
+
   private
+
+    def count(file, pattern)
+      count = 0
+      File.open(file, "r") do |infile|
+        while (line = infile.gets)
+          count += 1 if line.match(pattern)
+        end
+      end
+      count
+    end
 
     def java_sources(sources)
       sources.flatten.map { |source| File.directory?(source) ? FileList["#{source}/**/*.java"] : source } .
@@ -225,8 +274,12 @@ module Buildr::Scala
     def scalac_args #:nodoc:
       args = []
       args << "-nowarn" unless options[:warnings]
-      args << "-verbose" if Buildr.application.options.trace
-      args << "-g" if options[:debug]
+      args << "-verbose" if trace?(:scalac)
+      if options[:debug] == true
+        args << (Scala.version?(2.7, 2.8) ? "-g" : "-g:vars")
+      elsif options[:debug]
+        args << "-g:#{options[:debug]}"
+      end
       args << "-deprecation" if options[:deprecation]
       args << "-optimise" if options[:optimise]
       args << "-target:jvm-" + options[:target].to_s if options[:target]
